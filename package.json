@@ -1,0 +1,35 @@
+{
+  "name": "tevel---context-engine-poc",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "diagnose:ollama": "node scripts/validate-local-reasoning.mjs",
+    "bench:sidecar": "tsx scripts/benchmark-sidecar.ts",
+    "bench:knowledge": "tsx scripts/benchmark-knowledge-enrichment.ts",
+    "bench:entity-intelligence": "tsx scripts/benchmark-entity-intelligence.ts",
+    "test:sidecar": "tsx --test tests/sidecar/*.test.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.89.0",
+    "d3": "^7.9.0",
+    "firebase": "^12.7.0",
+    "lucide-react": "^0.555.0",
+    "maplibre-gl": "^5.23.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "autoprefixer": "^10.5.0",
+    "postcss": "^8.5.9",
+    "tailwindcss": "^3.4.17",
+    "tsx": "^4.20.6",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.0"
+  }
+}
