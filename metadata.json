@@ -1,5 +1,1 @@
-{
-  "name": "TEVEL - Context Engine POC",
-  "description": "A structured intelligence platform that converts unstructured documents into entities, relations, and knowledge graphs using the Gemini API.",
-  "requestFramePermissions": []
-}
+{"name": "Tevel Context Engine", "description": "A structured intelligence platform that converts unstructured documents into entities, relations, and knowledge graphs with deep resolution and temporal synthesis.", "requestFramePermissions": []}

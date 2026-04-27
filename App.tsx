@@ -9,7 +9,7 @@ import RealTimeDashboard from './components/RealTimeDashboard';
 import LoginPage from './components/LoginPage';
 import { SettingsPage } from './components/SettingsPage'; // Import Settings Page
 import IdentityResolutionApp from './identity-resolution/IdentityResolutionApp';
-import { isEntityMatch } from './services/geminiService';
+import { isEntityMatch } from './services/intelligenceService';
 import { analyzeDocument, enrichIntelligencePackage } from './services/analysisService';
 import { StudyService } from './services/studyService';
 import { auth } from './services/firebase';

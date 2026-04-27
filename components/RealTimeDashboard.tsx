@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import SourceView from './SourceView';
 import GraphView from './GraphView';
 import { Entity, GraphData, RawMedia, IntelligencePackage, StudyItem } from '../types';
-import { isEntityMatch } from '../services/geminiService';
+import { isEntityMatch } from '../services/intelligenceService';
 import { 
     ScanEye, 
     Network, 

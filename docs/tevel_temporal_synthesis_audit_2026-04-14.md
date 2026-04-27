@@ -49,7 +49,7 @@ Date: 2026-04-14
 
 - `services/sidecar/retrieval.ts`
   - lexical retrieval only
-- `services/geminiService.ts`
+- `services/intelligenceService.ts`
   - runtime retrieval/reranking/synthesis layer
   - mixes retrieval, summarization, cross-study reasoning, and answer generation
 
@@ -92,7 +92,7 @@ Date: 2026-04-14
 ### Summaries are not evidence-pack-driven by design
 
 - `buildSummary()` in `analysisService.ts` concatenates top entities, top relations, and earliest timeline item.
-- `geminiService.ts` does retrieval-aware synthesis, but the output contract is still mostly plain text and not guaranteed to include explicit cited evidence IDs.
+- `intelligenceService.ts` does retrieval-aware synthesis, but the output contract is still mostly plain text and not guaranteed to include explicit cited evidence IDs.
 - No stable summary panel artifact exists for:
   - case brief
   - entity brief
@@ -110,7 +110,7 @@ Date: 2026-04-14
 ### Retrieval is not yet suited for context-aware synthesis
 
 - `services/sidecar/retrieval.ts` is lexical-only.
-- `geminiService.ts` has runtime reranking logic, but it is not a durable retrieval layer and not organized as evidence-pack retrieval for case/timeline synthesis.
+- `intelligenceService.ts` has runtime reranking logic, but it is not a durable retrieval layer and not organized as evidence-pack retrieval for case/timeline synthesis.
 
 ### UI JSON is hard to extend cleanly
 
@@ -130,7 +130,7 @@ Date: 2026-04-14
 - Events are cue-based and useful as scaffolding, but no temporal-normalization pass follows them
 - Event outputs do not yet become durable event records with normalized temporal fields
 
-### `services/geminiService.ts`
+### `services/intelligenceService.ts`
 
 - Retrieval and synthesis are entangled
 - No stable evidence-pack contract before summary generation
@@ -176,7 +176,7 @@ Date: 2026-04-14
 - `services/sidecar/smartExtraction.ts`
 - `services/sidecar/smartPipeline.ts`
 - `services/sidecar/retrieval.ts`
-- `services/geminiService.ts`
+- `services/intelligenceService.ts`
 - `scripts/sidecar_m2_helper.py`
 - `components/AnalysisDashboard.tsx`
 - `scripts/benchmark-sidecar.ts`

@@ -82,7 +82,7 @@ Date: 2026-04-14
 
 - `services/sidecar/retrieval.ts`
   - Lexical inverted index over text units, mentions, and entities.
-- `services/geminiService.ts`
+- `services/intelligenceService.ts`
   - Builds a runtime reasoning index over chunks, entities, communities, and relations.
   - Uses local LLM/Ollama-oriented reasoning and ad hoc retrieval.
   - Retrieval is not yet durable, vector-backed, or case-persistent.
@@ -93,7 +93,7 @@ Date: 2026-04-14
   - Main browser orchestration.
   - Merges sidecar payloads into `IntelligencePackage`.
   - Builds context cards, derived statements, timeline, insights, and graph.
-- `services/geminiService.ts`
+- `services/intelligenceService.ts`
   - Secondary synthesis / briefing / Q&A / cross-reference layer.
   - Still mixes runtime retrieval, local model prompting, and summary generation in one large service.
 - `components/AnalysisDashboard.tsx`
@@ -172,7 +172,7 @@ Date: 2026-04-14
 ### Retrieval weaknesses
 
 - Sidecar retrieval is lexical only.
-- `geminiService.ts` builds a runtime reasoning index, but it is:
+- `intelligenceService.ts` builds a runtime reasoning index, but it is:
   - ephemeral
   - in-process
   - not case-persistent
@@ -185,7 +185,7 @@ Date: 2026-04-14
 - Summaries are built from mixed sources:
   - deterministic browser heuristics
   - sidecar payloads
-  - local model prompts in `geminiService.ts`
+  - local model prompts in `intelligenceService.ts`
 - No strict evidence-pack contract before summary generation.
 - No dedicated multi-document summarization module.
 - No contradiction summary artifact.
@@ -235,7 +235,7 @@ Date: 2026-04-14
 
 - Summaries are not always generated from curated evidence packs.
 - Multi-document summaries are not a first-class pipeline stage.
-- Summary generation and retrieval are still overly entangled in `geminiService.ts`.
+- Summary generation and retrieval are still overly entangled in `intelligenceService.ts`.
 
 ### Source attribution gaps
 

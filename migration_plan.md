@@ -78,7 +78,7 @@ That step is safe because it does not force UI rewrites, does not require schema
 
 ## Rollback Strategy
 
-- Keep `services/geminiService.ts:2163-2367` as a fallback analysis path until the sidecar path is proven
+- Keep `services/intelligenceService.ts:2163-2367` as a fallback analysis path until the sidecar path is proven
 - Gate the new path behind an environment flag or sidecar availability check
 - Keep `StudyService` reading the existing `studies` JSON blob during the transition
 - If sidecar extraction fails, fall back to current browser analysis without breaking the UI

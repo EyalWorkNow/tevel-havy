@@ -23,7 +23,7 @@ import {
   GitMerge,
   Trash2
 } from 'lucide-react';
-import { isEntityMatch } from '../services/geminiService';
+import { isEntityMatch } from '../services/intelligenceService';
 
 
 interface FeedDashboardProps {

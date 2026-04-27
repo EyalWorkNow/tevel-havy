@@ -1,53 +1,70 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Tevel - Context Engine
 
-# Run and deploy your AI Studio app
+Tevel is a production-grade OSINT and intelligence analysis platform designed for deep entity resolution, temporal evidence synthesis, and grounded reasoning. It transforms raw, unstructured data into high-fidelity knowledge graphs with verifiable provenance.
 
-This contains everything you need to run your app locally.
+## 🧠 Intelligence Capabilities
 
-View your app in AI Studio: https://ai.studio/apps/drive/1E6IfU5uiFIGEp-wRry1WjPhAsF0J0lCa
+- **High-Recall Entity Extraction**: Multi-pass analysis that breaks documents into overlapping units to ensure no actor, location, or organization is missed.
+- **Advanced Entity Resolution**: A dedicated resolution layer that handles alias clustering, canonicalization, and salience assignment, ensuring the right actors remain prominent even in dense datasets.
+- **Temporal Evidence Synthesis**: Automatic timeline reconstruction from extracted statements, mapping events with exact source-chunk provenance.
+- **Grounded Strategic Reasoning**: Generates tactical assessments, executive summaries, and collection gaps backed by explicit evidence snippets.
+- **Hybrid Retrieval Engine**: Combines lexical, structural, and semantic search (via local Ollama embeddings) for high-precision evidence discovery.
 
-## Run Locally
+## 🏗 Architecture
 
-**Prerequisites:** Node.js, and a local [Ollama](https://ollama.com/) instance with a pulled model.
+Tevel uses a hybrid architecture designed for performance and local privacy:
 
+- **Frontend (Vite/React)**: A modern investigative workspace featuring graph visualizations (D3), spatial mapping (MapLibre), and interactive entity/timeline explorers.
+- **Intelligence Sidecar**: A dedicated extraction and analysis runtime that owns document normalization, text-unit generation, and mention stitching.
+- **Local LLM Stack**: Fully integrated with [Ollama](https://ollama.com/) for local, private reasoning and embeddings.
 
-1. Install dependencies:
-   `npm install`
-2. Make sure Ollama is running locally, for example:
-   `ollama serve`
-3. Make sure the default model exists locally:
-   `ollama pull gemma4:e4b`
-4. Optional but recommended for stronger retrieval and cross-linking:
-   `ollama pull embeddinggemma`
-4.1 Optional but strongly recommended for grounded sidecar extraction:
-   `bash scripts/setup_sidecar_runtime.sh`
-   `export TEVEL_PYTHON_BIN="$(pwd)/.venv-sidecar/bin/python"`
-5. Optional: create `.env.local` to override the defaults:
-   `OLLAMA_MODEL=gemma4:e4b`
-   `OLLAMA_BASE_URL=http://127.0.0.1:11434`
-   `OLLAMA_EMBED_MODEL=embeddinggemma`
-   `TEVEL_ENABLE_FASTCOREF=1`
-   `TEVEL_RELIK_API_URL=http://127.0.0.1:8000`
-   `TEVEL_ANALYSIS_CONCURRENCY=2`
-   `TEVEL_ENTITY_BATCH_SIZE=24`
-   `TEVEL_RETRIEVAL_TOP_K=10`
-6. Run the app:
-   `npm run dev`
-7. Validate the local reasoning stack:
-   `npm run diagnose:ollama`
+## 🚀 Getting Started
 
-By default the app talks to `http://127.0.0.1:11434` and uses `gemma4:e4b`.
-If an embeddings model such as `embeddinggemma` is available locally, the app automatically upgrades to hybrid lexical + semantic retrieval for better reasoning over links and evidence.
-Large documents automatically use tighter chunking, adaptive evidence budgets, and controlled parallel extraction to keep recall high without overloading the local machine.
-If the sidecar Python runtime is installed, the app upgrades its extraction path with GLiNER-backed entity extraction by default. Optional fastcoref mention expansion can be enabled with `TEVEL_ENABLE_FASTCOREF=1` for shorter, higher-latency reviews, and optional ReLiK relation extraction runs through a separately hosted ReLiK API (`TEVEL_RELIK_API_URL`), which keeps the local Python runtime free of incompatible `transformers` constraints.
+### Prerequisites
 
-## Intelligence architecture highlights
+- **Node.js** (v20+ recommended)
+- **Ollama**: Running locally with the following models:
+  - `ollama pull gemma4:e4b` (Recommended chat model)
+  - `ollama pull embeddinggemma` (Optional, for semantic retrieval)
 
-- No hard cap on extracted entities
-- Dedicated entity resolution layer with alias clustering, canonicalization, source-chunk provenance, and evidence snippets
-- Refined relations and statement-to-entity remapping before strategic synthesis
-- Runtime hybrid retrieval over chunks, entities, relations, statements, communities, and timeline evidence
-- Adaptive chunk sizing and controlled local concurrency for large-document extraction
-- Relation-aware entity salience so graph hubs surface correctly even when the alias space is large
+### Installation
+
+1. **Clone the repository and install dependencies**:
+   ```bash
+   npm install
+   ```
+
+2. **Setup the Sidecar Runtime**:
+   The sidecar provides GLiNER-backed extraction and advanced entity intelligence.
+   ```bash
+   bash scripts/setup_sidecar_runtime.sh
+   export TEVEL_PYTHON_BIN="$(pwd)/.venv-sidecar/bin/python"
+   ```
+
+3. **Run the Development Server**:
+   ```bash
+   npm run dev
+   ```
+
+## ⚙️ Configuration
+
+Configure your environment via `.env.local` to override default settings:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `OLLAMA_MODEL` | The chat model used for synthesis | `gemma4:e4b` |
+| `OLLAMA_BASE_URL` | Local Ollama API endpoint | `http://127.0.0.1:11434` |
+| `TEVEL_ENABLE_FASTCOREF` | Enable coreference resolution | `0` |
+| `TEVEL_ANALYSIS_CONCURRENCY` | Parallel extraction chunks | `2` |
+
+## 📚 Deep Dives
+
+For detailed technical specifications, refer to the following documentation:
+
+- **[Reasoning Architecture](file:///REASONING_ARCHITECTURE.md)**: Details on the 7-stage analysis pipeline.
+- **[Architecture Report](file:///architecture_report.md)**: Deep dive into the sidecar and data persistence model.
+- **[Entity Intelligence](file:///docs/entity_intelligence_architecture_2026-04-15.md)**: Specifications for the resolution and canonicalization engine.
+- **[Implementation Notes](file:///implementation_notes.md)**: Current state of the PoC and upcoming milestones.
+
+---
+*Built for high-stakes intelligence analysis with local-first privacy.*

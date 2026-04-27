@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { IntelligencePackage, ChatMessage, Entity, ContextCard, StudyItem, TimelineEvent, PinnedItem, SynapseAnalysis, Relation, NarrativeBlock } from '../types';
 // Import generateStoryFromTimeline
-import { askContextualQuestion, generateExecutiveBrief, generateSynthesis, isEntityMatch, generateSynapseAnalysis, crossReferenceStudies, generateTimelineNarrative, reanalyzeEntityWithCrossReference, generateStoryFromTimeline } from '../services/geminiService';
+import { askContextualQuestion, generateExecutiveBrief, generateSynthesis, isEntityMatch, generateSynapseAnalysis, crossReferenceStudies, generateTimelineNarrative, reanalyzeEntityWithCrossReference, generateStoryFromTimeline } from '../services/intelligenceService';
 import { buildEntityContextCardFromPackage } from '../services/analysisService';
 import { StudyService, generateUUID } from '../services/studyService';
 import { getLinkedStudiesForEntity, isEquivalentStudyContext } from '../services/correlationUtils';

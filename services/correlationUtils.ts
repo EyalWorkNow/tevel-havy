@@ -1,5 +1,5 @@
 import type { StudyItem } from "../types";
-import { isEntityMatch } from "./geminiService";
+import { isEntityMatch } from "./intelligenceService";
 
 const normalize = (value?: string | null): string =>
   (value || "")

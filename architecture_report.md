@@ -5,9 +5,9 @@
 The current extraction engine runs almost entirely inside the browser bundle.
 
 - `App.tsx:218-277` calls `analyzeDocument(text)` directly from the UI thread when a user submits material.
-- `services/geminiService.ts:2163-2367` performs the full ingest pipeline in-process: normalize text, split into overlapping chunks, run chunk extraction with the chat model, merge results, run entity refinement, run strategic synthesis, and return the final `IntelligencePackage`.
+- `services/intelligenceService.ts:2163-2367` performs the full ingest pipeline in-process: normalize text, split into overlapping chunks, run chunk extraction with the chat model, merge results, run entity refinement, run strategic synthesis, and return the final `IntelligencePackage`.
 - `services/intelligence/entityCreation.ts:131-250` adds another structured LLM pass over grouped entity candidates for canonicalization and salience assignment.
-- `services/geminiService.ts:1267-1845` also builds the runtime retrieval index in memory and does embedding + LLM reranking at query time.
+- `services/intelligenceService.ts:1267-1845` also builds the runtime retrieval index in memory and does embedding + LLM reranking at query time.
 - `services/studyService.ts:60-79` persists the result primarily as a JSON blob in `studies`, with best-effort entity/relation upserts in parallel.
 - `types.ts:50-205` shows the current application payload shape. It keeps `Entity.evidence` as raw strings and `Entity.source_chunks` as chunk numbers, but does not preserve exact char offsets, text-unit ids, or durable evidence ids.
 
@@ -46,18 +46,18 @@ The new architecture should introduce a local sidecar service that owns determin
 #### What moves to the sidecar
 
 - All document parsing and normalization now implied by `IngestionPanel` uploads and link capture
-- Chunking and overlap logic currently in `services/geminiService.ts:344-442`
-- Fast extraction now split between `services/geminiService.ts:2170-2204` and `services/intelligence/entityCreation.ts:74-128`
+- Chunking and overlap logic currently in `services/intelligenceService.ts:344-442`
+- Fast extraction now split between `services/intelligenceService.ts:2170-2204` and `services/intelligence/entityCreation.ts:74-128`
 - Entity grouping / mention normalization / alias mapping now handled in `services/intelligence/entityCreation.ts:145-250`
-- Query-time retrieval preparation now built in `services/geminiService.ts:1267-1845`
+- Query-time retrieval preparation now built in `services/intelligenceService.ts:1267-1845`
 - Exact evidence span attachment, which does not exist today
 
 #### What is removed or deprecated
 
-- Browser-resident chunk extraction in `services/geminiService.ts:2176-2204`
+- Browser-resident chunk extraction in `services/intelligenceService.ts:2176-2204`
 - Browser-resident LLM entity refinement loops in `services/intelligence/entityCreation.ts:155-229`
-- Regex-window evidence reconstruction via `KnowledgeFusionEngine.extractRelevantPassages` in `services/geminiService.ts:991-1020`
-- Query-time LLM reranking as a default path in `services/geminiService.ts:1716-1825`
+- Regex-window evidence reconstruction via `KnowledgeFusionEngine.extractRelevantPassages` in `services/intelligenceService.ts:991-1020`
+- Query-time LLM reranking as a default path in `services/intelligenceService.ts:1716-1825`
 - JSON-only provenance storage in `types.ts:50-69` and `services/studyService.ts:262-299`
 
 ## Ingestion Flow
@@ -149,7 +149,7 @@ Retrieval should become a sidecar responsibility in two stages:
 - optional reranking only after deterministic shortlist creation
 - graph-aware evidence pack assembly
 
-This is a better fit for Tevel than the current runtime rebuild approach in `services/geminiService.ts:1267-1845`, which reconstructs evidence structures in memory from a flattened application payload.
+This is a better fit for Tevel than the current runtime rebuild approach in `services/intelligenceService.ts:1267-1845`, which reconstructs evidence structures in memory from a flattened application payload.
 
 ## Reasoning Flow
 

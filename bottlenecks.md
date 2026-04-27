@@ -4,7 +4,7 @@
 
 ### 1. Per-chunk LLM extraction is the dominant ingest cost
 
-- Reference: `services/geminiService.ts:2170-2204`
+- Reference: `services/intelligenceService.ts:2170-2204`
 - Why it matters: every chunk becomes a separate structured generation request. Large documents scale linearly with chunk count, and overlap causes partially repeated work.
 - Estimated impact of fixing: high. Replacing first-pass chunk extraction with deterministic + lightweight-model extraction should cut end-to-end ingest latency by the largest margin, especially on multi-chunk reports.
 
@@ -16,25 +16,25 @@
 
 ### 3. Strategic synthesis is a third mandatory LLM pass before the app can persist
 
-- Reference: `services/geminiService.ts:2282-2367`
+- Reference: `services/intelligenceService.ts:2282-2367`
 - Why it matters: the UI does not get a finished package until extraction, refinement, and synthesis all complete.
 - Estimated impact of fixing: medium to high. Moving synthesis to a second-stage optional/follow-up step lowers ingest-to-usable latency.
 
 ### 4. Query-time reranking performs another LLM call during analyst questioning
 
-- Reference: `services/geminiService.ts:1716-1825`
+- Reference: `services/intelligenceService.ts:1716-1825`
 - Why it matters: even after analysis is complete, the app still invokes the model for reranking evidence candidates. This adds latency to every analyst question.
 - Estimated impact of fixing: medium. A deterministic shortlist plus optional lightweight rerank should noticeably improve response time.
 
 ### 5. Embedding discovery and embedding calls are done at runtime from the client
 
-- Reference: `services/geminiService.ts:1606-1697`
+- Reference: `services/intelligenceService.ts:1606-1697`
 - Why it matters: model detection and embedding work happen inside the app runtime, not in a dedicated service. This increases answer latency and keeps model orchestration in the browser bundle.
 - Estimated impact of fixing: medium. Moving this to a sidecar lowers UI coupling and simplifies caching.
 
 ### 6. The browser bundle currently carries the entire extraction / retrieval stack
 
-- Reference: `services/geminiService.ts` overall, plus build output from `npm run build`
+- Reference: `services/intelligenceService.ts` overall, plus build output from `npm run build`
 - Why it matters: the production bundle is already ~998 kB minified JS, and almost all extraction logic ships to the browser even though it belongs in a local service.
 - Estimated impact of fixing: medium. Bundle size and cold-start UX improve once extraction/indexing move out of the client.
 
@@ -42,7 +42,7 @@
 
 ### 1. Chunking does not preserve exact source offsets
 
-- Reference: `services/geminiService.ts:365-406`
+- Reference: `services/intelligenceService.ts:365-406`
 - Why it matters: `splitIntoChunks` returns `{ index, content }` only. Once text is chunked, the system loses exact char positions in the original document.
 - Consequence: exact evidence highlighting, contradiction tracing, and durable provenance are impossible.
 - Estimated impact of fixing: very high. This is foundational for trustworthy investigative outputs.
@@ -56,7 +56,7 @@
 
 ### 3. Evidence reconstruction uses regex windows instead of stored spans
 
-- Reference: `services/geminiService.ts:991-1020`
+- Reference: `services/intelligenceService.ts:991-1020`
 - Why it matters: `extractRelevantPassages` rescans raw text and builds approximate windows around search hits.
 - Consequence: evidence shown later may differ from what the extractor actually used, and overlapping aliases can produce noisy windows.
 - Estimated impact of fixing: high.
@@ -85,10 +85,10 @@
 ## File-Level Reference Summary
 
 - `App.tsx:218-277` shows UI-triggered synchronous analysis and persistence.
-- `services/geminiService.ts:365-406` shows chunking without offsets.
-- `services/geminiService.ts:1242-1258` shows the generic structured LLM call wrapper.
-- `services/geminiService.ts:1267-1845` shows runtime retrieval, embeddings, and reranking in the client.
-- `services/geminiService.ts:2163-2367` shows the three-stage LLM-heavy analysis path.
+- `services/intelligenceService.ts:365-406` shows chunking without offsets.
+- `services/intelligenceService.ts:1242-1258` shows the generic structured LLM call wrapper.
+- `services/intelligenceService.ts:1267-1845` shows runtime retrieval, embeddings, and reranking in the client.
+- `services/intelligenceService.ts:2163-2367` shows the three-stage LLM-heavy analysis path.
 - `services/intelligence/entityCreation.ts:74-128` shows deterministic heuristics that are currently underused and offset-free.
 - `services/intelligence/entityCreation.ts:145-229` shows LLM entity refinement batches.
 - `services/studyService.ts:60-79` shows JSON-first persistence.
