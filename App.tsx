@@ -613,10 +613,10 @@ const App: React.FC = () => {
             <nav 
                 onMouseEnter={() => setIsNavExpanded(true)}
                 onMouseLeave={() => setIsNavExpanded(false)}
-                className={`m-4 mr-0 rounded-[28px] tevel-glass-strong flex flex-col justify-between py-5 shrink-0 z-30 transition-all duration-300 ease-in-out ${isNavExpanded ? 'w-72' : 'w-24'}`}
+                className={`m-4 mr-0 rounded-[28px] tevel-glass-strong flex flex-col justify-between py-5 shrink-0 z-30 transition-all duration-300 ease-in-out ${isNavExpanded ? 'w-72' : 'w-20'}`}
             >
-                <div className="flex flex-col gap-2 px-3">
-                    <div className={`flex items-center min-h-[74px] mb-3 ${isNavExpanded ? 'px-4 justify-start' : 'justify-center'}`}>
+                <div className="flex flex-col gap-1 px-3">
+                    <div className={`flex items-center min-h-[64px] mb-2 ${isNavExpanded ? 'px-4 justify-start' : 'justify-center'}`}>
                         <div className="shrink-0">
                            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                                <defs><linearGradient id="tevel-gradient" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stopColor="#05DF9C" /><stop offset="100%" stopColor="#04a777" /></linearGradient></defs>
@@ -626,12 +626,12 @@ const App: React.FC = () => {
                                <rect x="10.5" y="2" width="3" height="20" rx="1.5" transform="rotate(135 12 12)" fill="url(#tevel-gradient)" />
                            </svg>
                         </div>
-                        <div className={`overflow-hidden transition-all duration-200 ${isNavExpanded ? 'w-auto opacity-100 ml-4' : 'w-0 opacity-0 ml-0'}`}>
+                        <div className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isNavExpanded ? 'max-w-[200px] opacity-100 ml-3' : 'max-w-0 opacity-0 ml-0'}`}>
                             <div className="text-white font-black text-2xl tracking-tight tevel-title">TEVEL</div>
-                            <div className="tevel-kicker text-[10px] text-slate-500 mt-1">Local Context Engine</div>
+                            <div className="tevel-kicker text-[10px] text-slate-500 mt-0.5">Local Context Engine</div>
                         </div>
                     </div>
-                    <div className={`mx-2 mb-3 rounded-2xl border border-slate-800/80 bg-[radial-gradient(circle_at_top_left,rgba(83,242,194,0.12),transparent_40%),linear-gradient(180deg,rgba(17,27,39,0.95),rgba(9,15,24,0.92))] p-4 transition-all duration-200 ${isNavExpanded ? 'opacity-100 max-h-48' : 'opacity-0 max-h-0 overflow-hidden p-0 border-transparent'}`}>
+                    <div className={`mx-2 rounded-2xl border border-slate-800/80 bg-[radial-gradient(circle_at_top_left,rgba(83,242,194,0.12),transparent_40%),linear-gradient(180deg,rgba(17,27,39,0.95),rgba(9,15,24,0.92))] transition-all duration-300 ${isNavExpanded ? 'opacity-100 max-h-48 p-4 mb-3' : 'opacity-0 max-h-0 overflow-hidden p-0 mb-0 border-transparent'}`}>
                         <div className="tevel-kicker text-[10px] mb-2">Mission posture</div>
                         <div className="text-white font-semibold leading-tight">Professional local-first intelligence workspace</div>
                         <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
@@ -647,10 +647,10 @@ const App: React.FC = () => {
                     </div>
                     {navItems.map(item => (
                         <div key={item.id} className="relative group">
-                            <button onClick={() => handleSetView(item.id as ViewState)} className={`flex items-center min-h-[60px] rounded-2xl transition-colors duration-200 text-sm font-bold w-full relative overflow-hidden ${isNavExpanded ? 'px-4 justify-start' : 'justify-center'} ${view === item.id ? 'bg-white/[0.06] border border-white/[0.08]' : 'text-slate-500 hover:bg-white/[0.04] hover:text-slate-200 border border-transparent'}`}>
+                            <button onClick={() => handleSetView(item.id as ViewState)} className={`flex items-center min-h-[52px] rounded-2xl transition-colors duration-200 text-sm font-bold w-full relative overflow-hidden ${isNavExpanded ? 'px-4 justify-start' : 'justify-center'} ${view === item.id ? 'bg-white/[0.06] border border-white/[0.08]' : 'text-slate-500 hover:bg-white/[0.04] hover:text-slate-200 border border-transparent'}`}>
                                 <div className={`absolute left-0 top-3 bottom-3 w-1 bg-[#05DF9C] rounded-r-full shadow-[0_0_16px_#05DF9C] transition-all duration-300 ${view === item.id ? 'opacity-100 scale-y-100' : 'opacity-0 scale-y-0'}`}></div>
                                 <item.icon size={20} className={`shrink-0 transition-colors ${view === item.id ? 'text-[#05DF9C]' : 'text-slate-500 group-hover:text-slate-200'}`}/>
-                                <div className={`overflow-hidden transition-all duration-200 ${isNavExpanded ? 'w-auto opacity-100 ml-4' : 'w-0 opacity-0 ml-0'}`}>
+                                <div className={`flex flex-col text-left whitespace-nowrap overflow-hidden transition-all duration-300 ${isNavExpanded ? 'max-w-[200px] opacity-100 ml-3' : 'max-w-0 opacity-0 ml-0'}`}>
                                     <div className={`${view === item.id ? 'text-white' : ''}`}>{item.label}</div>
                                     <div className="text-[10px] font-medium text-slate-500 mt-0.5">{item.hint}</div>
                                 </div>
@@ -658,8 +658,8 @@ const App: React.FC = () => {
                         </div>
                     ))}
                 </div>
-                <div className="flex flex-col gap-2 px-3">
-                    <div className={`mx-2 mb-2 rounded-2xl border border-slate-800/80 bg-black/20 p-3 transition-all duration-200 ${isNavExpanded ? 'opacity-100 max-h-40' : 'opacity-0 max-h-0 overflow-hidden p-0 border-transparent'}`}>
+                <div className="flex flex-col gap-1 px-3">
+                    <div className={`mx-2 rounded-2xl border border-slate-800/80 bg-black/20 transition-all duration-300 ${isNavExpanded ? 'opacity-100 max-h-40 p-3 mb-2' : 'opacity-0 max-h-0 overflow-hidden p-0 mb-0 border-transparent'}`}>
                         <div className="flex items-center justify-between">
                             <div>
                                 <div className="text-white text-sm font-semibold">{user.email?.split('@')[0] || 'Analyst'}</div>
@@ -676,10 +676,10 @@ const App: React.FC = () => {
                         <div key={item.id} className="relative group">
                             <button 
                                 onClick={item.action}
-                                className={`flex items-center min-h-[52px] rounded-2xl transition-colors duration-200 text-sm font-bold w-full text-slate-500 hover:bg-white/[0.04] hover:text-slate-200 overflow-hidden ${isNavExpanded ? 'px-4 justify-start' : 'justify-center'} ${view === item.id ? 'bg-white/[0.05] text-white border border-white/[0.08]' : ''}`}
+                                className={`flex items-center min-h-[48px] rounded-2xl transition-colors duration-200 text-sm font-bold w-full text-slate-500 hover:bg-white/[0.04] hover:text-slate-200 overflow-hidden ${isNavExpanded ? 'px-4 justify-start' : 'justify-center'} ${view === item.id ? 'bg-white/[0.05] text-white border border-white/[0.08]' : ''}`}
                             >
                                 <item.icon size={20} className={`shrink-0 group-hover:text-slate-200 ${view === item.id ? 'text-[#05DF9C]' : ''}`}/>
-                                <span className={`whitespace-nowrap transition-all duration-200 ${isNavExpanded ? 'w-auto opacity-100 ml-4' : 'w-0 opacity-0 ml-0'}`}>{item.label}</span>
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isNavExpanded ? 'max-w-[200px] opacity-100 ml-3' : 'max-w-0 opacity-0 ml-0'}`}>{item.label}</span>
                             </button>
                         </div>
                     ))}
