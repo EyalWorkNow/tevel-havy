@@ -172,12 +172,14 @@ type RuntimeReasoningIndex = {
     entityNeighbors: Map<string, string[]>;
 };
 
-type QuestionAnswerOptions = {
+export type QuestionAnswerOptions = {
     fastMode?: boolean;
     answerTimeoutMs?: number;
+    maxKnowledgeSummaryChars?: number;
     caseId?: string;
     answerId?: string;
-    maxKnowledgeSummaryChars?: number;
+    reasoningEngineId?: ReasoningEngineId;
+    geminiApiKey?: string;
     onCitationVerification?: (run: CitationVerificationRun) => void | Promise<void>;
     readPathContext?: {
         knowledgeSnapshot?: string;
@@ -200,17 +202,130 @@ const boundedEnvInt = (name: string, fallback: number, min: number, max: number)
     return Math.min(max, Math.max(min, parsed));
 };
 
-const DEFAULT_OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434";
-const DEFAULT_OLLAMA_MODEL = process.env.OLLAMA_MODEL || "qwen3.5:4b";
-const DEFAULT_OLLAMA_EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || "embeddinggemma";
-const REQUEST_TIMEOUT_MS = 1800000;
-const FAST_QA_TIMEOUT_MS = 1800000;
+const getEnvVar = (key: string): string => {
+    // @ts-ignore
+    const viteEnv = typeof import.meta !== "undefined" && import.meta.env ? import.meta.env[`VITE_${key}`] : undefined;
+    const processEnv = typeof process !== "undefined" && process.env ? process.env[key] || process.env[`VITE_${key}`] : undefined;
+    return viteEnv || processEnv || "";
+};
+
+const DEFAULT_OLLAMA_BASE_URL = getEnvVar("OLLAMA_BASE_URL") || "http://127.0.0.1:11434";
+const DEFAULT_OLLAMA_MODEL = getEnvVar("OLLAMA_MODEL") || "qwen3.5:4b";
+const DEFAULT_FAST_OLLAMA_MODEL = getEnvVar("OLLAMA_FAST_MODEL") || "qwen2.5:1.5b";
+const DEFAULT_OLLAMA_EMBED_MODEL = getEnvVar("OLLAMA_EMBED_MODEL") || "embeddinggemma";
+
+const DEFAULT_GEMINI_MODEL = getEnvVar("GEMINI_MODEL") || "gemini-2.5-flash";
+const GEMINI_API_KEY = getEnvVar("GEMINI_API_KEY");
+export const HAS_CONFIGURED_GEMINI_API_KEY = Boolean(GEMINI_API_KEY.trim());
+export const USE_GEMINI_BY_DEFAULT = getEnvVar("TEVEL_USE_GEMINI") === "true";
+export type ReasoningEngineId = "gemini-cloud" | "ollama-local";
+export type ReasoningEngineSurface = "cloud" | "local";
+export type ReasoningFailureKind = "timeout" | "offline";
+
+export interface ReasoningEngineDescriptor {
+    id: ReasoningEngineId;
+    surface: ReasoningEngineSurface;
+    label: string;
+    model: string;
+}
+
+export interface ReasoningFailureDescriptor {
+    kind: ReasoningFailureKind;
+    message: string;
+    engine: ReasoningEngineDescriptor;
+}
+
+const formatGeminiLabel = (model: string): string =>
+    model
+        .split("-")
+        .filter((part) => part && part !== "gemini")
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(" ")
+        .replace(/^/, "Gemini ");
+
+export const getReasoningEngineDescriptor = (engineId?: ReasoningEngineId): ReasoningEngineDescriptor => {
+    const selectedEngineId = engineId || (USE_GEMINI_BY_DEFAULT ? "gemini-cloud" : "ollama-local");
+    if (selectedEngineId === "gemini-cloud") {
+        return {
+            id: "gemini-cloud",
+            surface: "cloud",
+            label: formatGeminiLabel(DEFAULT_GEMINI_MODEL),
+            model: DEFAULT_GEMINI_MODEL,
+        };
+    }
+
+    return {
+        id: "ollama-local",
+        surface: "local",
+        label: DEFAULT_OLLAMA_MODEL,
+        model: DEFAULT_OLLAMA_MODEL,
+    };
+};
+
+export const PRIMARY_REASONING_ENGINE: ReasoningEngineDescriptor = Object.freeze(getReasoningEngineDescriptor());
+
+export const buildReasoningFailureMessage = (
+    kind: ReasoningFailureKind,
+    engine: ReasoningEngineDescriptor = PRIMARY_REASONING_ENGINE,
+): string => {
+    if (engine.surface === "cloud") {
+        return kind === "timeout"
+            ? "Cloud reasoning engine timed out while answering the question."
+            : "Comms offline: unable to reach the cloud reasoning engine.";
+    }
+
+    return kind === "timeout"
+        ? "Local model timed out while answering the question."
+        : "Comms offline: unable to reach the local model.";
+};
+
+export const classifyReasoningFailure = (
+    message: string,
+    engine: ReasoningEngineDescriptor = PRIMARY_REASONING_ENGINE,
+): ReasoningFailureDescriptor | null => {
+    const normalized = String(message || "").trim();
+    if (!normalized) return null;
+
+    if (
+        /timed out while answering|local model timed out|cloud reasoning engine timed out|reasoning engine timed out/i.test(normalized)
+        || /Gemini API request timed out|Local model request timed out/i.test(normalized)
+    ) {
+        return {
+            kind: "timeout",
+            message: buildReasoningFailureMessage("timeout", engine),
+            engine,
+        };
+    }
+
+    if (
+        /comms offline|unable to reach the (?:cloud reasoning engine|local model|reasoning engine)/i.test(normalized)
+        || /Gemini Cloud Reasoning failed|All Gemini connectivity paths failed|Unable to reach the local model|Gemini API key is not configured/i.test(normalized)
+    ) {
+        return {
+            kind: "offline",
+            message: buildReasoningFailureMessage("offline", engine),
+            engine,
+        };
+    }
+
+    return null;
+};
+
+console.warn(
+    USE_GEMINI_BY_DEFAULT
+        ? `[TEVEL] CLOUD REASONING ACTIVE: Using ${formatGeminiLabel(DEFAULT_GEMINI_MODEL)} as the primary engine.`
+        : `[TEVEL] LOCAL REASONING ACTIVE: Using Ollama ${DEFAULT_OLLAMA_MODEL} as the primary engine.`,
+);
+
+const REQUEST_TIMEOUT_MS = USE_GEMINI_BY_DEFAULT ? 45000 : boundedEnvInt("TEVEL_REASONING_TIMEOUT_MS", 120000, 15000, 300000);
+const FAST_QA_TIMEOUT_MS = USE_GEMINI_BY_DEFAULT ? 30000 : boundedEnvInt("TEVEL_FAST_QA_TIMEOUT_MS", 90000, 10000, 180000);
+const LOCAL_MODEL_ATTEMPT_TIMEOUT_MS = boundedEnvInt("TEVEL_LOCAL_MODEL_ATTEMPT_TIMEOUT_MS", 35000, 10000, 120000);
 const MAX_CHUNK_CHARS = 4200;
 const CHUNK_OVERLAP_CHARS = 320;
 const MAX_CONTEXT_EXCERPT_CHARS = 8000;
 const RETRIEVAL_CHUNK_CHARS = 1400;
 const RETRIEVAL_CHUNK_OVERLAP_CHARS = 140;
-const ANALYSIS_CHUNK_CONCURRENCY = boundedEnvInt("TEVEL_ANALYSIS_CONCURRENCY", 2, 1, 3);
+const ANALYSIS_CHUNK_CONCURRENCY = USE_GEMINI_BY_DEFAULT ? 12 : boundedEnvInt("TEVEL_ANALYSIS_CONCURRENCY", 2, 1, 3);
 const ENTITY_REFINEMENT_BATCH_SIZE = boundedEnvInt("TEVEL_ENTITY_BATCH_SIZE", 24, 12, 36);
 const DEFAULT_RETRIEVAL_TOP_K = boundedEnvInt("TEVEL_RETRIEVAL_TOP_K", 10, 8, 14);
 const MAX_EVIDENCE_ENTITY_NAMES = boundedEnvInt("TEVEL_MAX_EVIDENCE_ENTITIES", 18, 12, 28);
@@ -1120,8 +1235,7 @@ class CognitiveGateway {
 
         return `${instruction}
 
-Return only valid JSON.
-Do not wrap the JSON in markdown fences.
+Return only valid JSON. If you must use markdown fences, use markdown code blocks.
 Keep field names exactly as requested.
 Use exhaustive recall when extracting entities and relations from a chunk.
 Schema:
@@ -1182,6 +1296,97 @@ ${JSON.stringify(schema, null, 2)}`;
         throw new Error("Model returned malformed JSON.");
     }
 
+    private static async requestGemini(params: {
+        prompt: string;
+        model: string;
+        apiKey?: string;
+        systemInstruction?: string;
+        schema?: JsonSchema;
+        timeoutMs?: number;
+    }): Promise<string> {
+        const apiKey = (params.apiKey || GEMINI_API_KEY).trim();
+        if (!apiKey) {
+            throw new Error("Gemini API key is not configured.");
+        }
+
+        const timeoutMs = params.timeoutMs || REQUEST_TIMEOUT_MS;
+        const controller = new AbortController();
+        const timeoutId = globalThis.setTimeout(() => controller.abort(), timeoutMs);
+
+        try {
+            // Clean model name and paths
+            const modelName = params.model.includes("gemini") ? params.model : DEFAULT_GEMINI_MODEL;
+            const isBrowser = typeof window !== "undefined";
+            
+            // Try v1beta first as it is more feature-rich, then v1
+            const urls = isBrowser 
+                ? [
+                    `/gemini/v1beta/models/${modelName}:generateContent`,
+                    `/gemini/v1/models/${modelName}:generateContent`
+                  ]
+                : [
+                    `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`,
+                    `https://generativelanguage.googleapis.com/v1/models/${modelName}:generateContent`
+                  ];
+
+            let lastError: Error | null = null;
+            for (const url of urls) {
+                try {
+                    const body = {
+                        contents: [
+                            {
+                                parts: [
+                                    { text: `SYSTEM INSTRUCTION:\n${this.buildSystemInstruction(params.systemInstruction, params.schema)}\n\nUSER PROMPT:\n${params.prompt}` }
+                                ],
+                            },
+                        ],
+                    };
+
+                    console.info(`[CognitiveGateway] Attempting Gemini via: ${url.split('?')[0]}`);
+
+                    const response = await fetch(url, {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "x-goog-api-key": apiKey,
+                        },
+                        body: JSON.stringify(body),
+                        signal: controller.signal,
+                    });
+
+                    if (!response.ok) {
+                        const errorData = await response.json().catch(() => ({}));
+                        const errorMsg = `Status ${response.status}: ${JSON.stringify(errorData)}`;
+                        console.error(`[CognitiveGateway] Gemini request failed: ${errorMsg}`);
+                        throw new Error(errorMsg);
+                    }
+
+                    const data = await response.json();
+                    const content = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+
+                    if (!content.trim()) {
+                        throw new Error("Empty response from model");
+                    }
+
+                    console.info(`[CognitiveGateway] Gemini success (${content.length} chars)`);
+                    return content.trim();
+                } catch (e: any) {
+                    lastError = e;
+                    console.warn(`Gemini attempt to ${url.split('?')[0]} failed:`, e.message);
+                    continue; // Try next URL
+                }
+            }
+            throw lastError || new Error("All Gemini connectivity paths failed.");
+        } catch (error: any) {
+            if (error.name === "AbortError" || error.message?.includes("aborted")) {
+                throw new Error("Gemini API request timed out.");
+            }
+            throw error instanceof Error ? error : new Error(String(error));
+        } finally {
+            globalThis.clearTimeout(timeoutId);
+        }
+    }
+
     private static async requestModel(params: {
         prompt: string;
         model: string;
@@ -1189,66 +1394,100 @@ ${JSON.stringify(schema, null, 2)}`;
         schema?: JsonSchema;
         format?: JsonSchema | "json";
         timeoutMs?: number;
+        reasoningEngineId?: ReasoningEngineId;
+        geminiApiKey?: string;
     }): Promise<string> {
+        const explicitGeminiModel = params.model.includes("gemini");
+        const forcedGemini = params.reasoningEngineId === "gemini-cloud";
+        const forcedLocal = params.reasoningEngineId === "ollama-local";
+        const shouldUseGemini = forcedGemini || (!forcedLocal && (USE_GEMINI_BY_DEFAULT || explicitGeminiModel));
+
+        if (shouldUseGemini) {
+            try {
+                return await this.requestGemini({
+                    prompt: params.prompt,
+                    model: forcedGemini && !explicitGeminiModel ? DEFAULT_GEMINI_MODEL : params.model,
+                    apiKey: params.geminiApiKey,
+                    systemInstruction: params.systemInstruction,
+                    schema: params.schema,
+                    timeoutMs: params.timeoutMs,
+                });
+            } catch (error) {
+                console.error("Gemini request failed:", error);
+                if (forcedGemini || explicitGeminiModel) {
+                    throw error;
+                }
+                console.warn("Gemini primary reasoning failed; falling back to local Ollama reasoning.");
+            }
+        }
+
         const timeoutMs = params.timeoutMs || REQUEST_TIMEOUT_MS;
         let lastError: Error | null = null;
 
-        for (const baseUrl of this.buildBaseUrls()) {
-            const controller = new AbortController();
-            const timeoutId = globalThis.setTimeout(() => controller.abort(), timeoutMs);
+        const ollamaModels = Array.from(new Set([params.model, DEFAULT_FAST_OLLAMA_MODEL].filter((model) => model && !model.includes("gemini"))));
 
-            try {
-                const response = await fetch(`${this.normalizeBaseUrl(baseUrl)}/api/chat`, {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                        model: params.model,
-                        stream: false,
-                        format: params.format,
-                        options: {
-                            temperature: 0.2,
-                            num_ctx: 3200,
-                            num_predict: 1000,
+        for (const model of ollamaModels) {
+            for (const baseUrl of this.buildBaseUrls()) {
+                const controller = new AbortController();
+                const timeoutId = globalThis.setTimeout(() => controller.abort(), Math.min(timeoutMs, LOCAL_MODEL_ATTEMPT_TIMEOUT_MS));
+
+                try {
+                    console.info(`[CognitiveGateway] Attempting Ollama model ${model} via ${this.normalizeBaseUrl(baseUrl)}`);
+                    const response = await fetch(`${this.normalizeBaseUrl(baseUrl)}/api/chat`, {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
                         },
-                        messages: [
-                            {
-                                role: "system",
-                                content: this.buildSystemInstruction(params.systemInstruction, params.schema),
+                        body: JSON.stringify({
+                            model,
+                            stream: false,
+                            format: params.format,
+                            options: {
+                                temperature: 0.15,
+                                num_ctx: 2048,
+                                num_predict: 800,
+                                repeat_penalty: 1.15,
+                                think: false,
                             },
-                            {
-                                role: "user",
-                                content: params.prompt,
-                            },
-                        ],
-                    }),
-                    signal: controller.signal,
-                });
+                            messages: [
+                                {
+                                    role: "system",
+                                    content: this.buildSystemInstruction(params.systemInstruction, params.schema),
+                                },
+                                {
+                                    role: "user",
+                                    content: params.prompt,
+                                },
+                            ],
+                        }),
+                        signal: controller.signal,
+                    });
 
-                if (!response.ok) {
-                    throw new Error(`Ollama request failed with status ${response.status}.`);
-                }
+                    if (!response.ok) {
+                        throw new Error(`Ollama request failed with status ${response.status}.`);
+                    }
 
-                const data = (await response.json()) as OllamaResponse;
-                if (data.error) {
-                    throw new Error(data.error);
-                }
+                    const data = (await response.json()) as OllamaResponse;
+                    if (data.error) {
+                        throw new Error(data.error);
+                    }
 
-                const content = data.message?.content || data.response || "";
-                if (!content.trim()) {
-                    throw new Error("Local model returned an empty response.");
-                }
+                    const content = data.message?.content || data.response || "";
+                    if (!content.trim()) {
+                        throw new Error("Local model returned an empty response.");
+                    }
 
-                return content.trim();
-            } catch (error: any) {
-                if (error.name === "AbortError" || error.message?.includes("aborted")) {
-                    lastError = new Error("Local model request timed out.");
-                } else {
-                    lastError = error instanceof Error ? error : new Error(String(error));
+                    return content.trim();
+                } catch (error: any) {
+                    if (error.name === "AbortError" || error.message?.includes("aborted")) {
+                        lastError = new Error(`Local model ${model} request timed out.`);
+                    } else {
+                        lastError = error instanceof Error ? error : new Error(String(error));
+                    }
+                    console.warn(`[CognitiveGateway] Ollama model ${model} failed:`, lastError.message);
+                } finally {
+                    globalThis.clearTimeout(timeoutId);
                 }
-            } finally {
-                globalThis.clearTimeout(timeoutId);
             }
         }
 
@@ -1261,8 +1500,14 @@ ${JSON.stringify(schema, null, 2)}`;
         systemInstruction?: string;
         schema?: JsonSchema;
         timeoutMs?: number;
+        reasoningEngineId?: ReasoningEngineId;
+        geminiApiKey?: string;
     }): Promise<string> {
-        const model = params.model || DEFAULT_OLLAMA_MODEL;
+        const selectedEngine = getReasoningEngineDescriptor(params.reasoningEngineId);
+        const model = params.model || selectedEngine.model;
+        const usingGemini = selectedEngine.id === "gemini-cloud" || model.includes("gemini");
+        
+        console.info(`[CognitiveGateway] Generating with ${usingGemini ? "Gemini (Cloud)" : `Ollama (${model})`}`);
 
         try {
             const content = await this.requestModel({
@@ -1272,6 +1517,8 @@ ${JSON.stringify(schema, null, 2)}`;
                 schema: params.schema,
                 format: params.schema,
                 timeoutMs: params.timeoutMs,
+                reasoningEngineId: params.reasoningEngineId,
+                geminiApiKey: params.geminiApiKey,
             });
 
             return params.schema ? this.extractJsonBlock(content) : content;
@@ -1289,6 +1536,8 @@ Return a valid JSON object only. Do not add explanations.`,
                 schema: params.schema,
                 format: "json",
                 timeoutMs: params.timeoutMs,
+                reasoningEngineId: params.reasoningEngineId,
+                geminiApiKey: params.geminiApiKey,
             });
 
             return this.extractJsonBlock(fallbackContent);
@@ -2353,6 +2602,7 @@ CHUNK:
             }))
         );
 
+        console.info(`Starting entity refinement for ${merged.entities.length} merged entities...`);
         const refinedEntities = await EntityCreationEngine.refineEntities({
             sourceText: normalizedText,
             mergedEntities: merged.entities,
@@ -2360,7 +2610,7 @@ CHUNK:
             relations: merged.relations,
             generateStructured,
             schema: ENTITY_REFINEMENT_SCHEMA,
-            batchSize: ENTITY_REFINEMENT_BATCH_SIZE,
+            batchSize: USE_GEMINI_BY_DEFAULT ? 50 : ENTITY_REFINEMENT_BATCH_SIZE,
         });
 
         const mapToCanonicalEntity = (value: string): string => {
@@ -2421,6 +2671,7 @@ CHUNK:
             },
         };
 
+        console.info("Finalizing strategic synthesis and tactical assessment...");
         const synthesis = await generateStructured<StrategicSynthesisResponse>({
             prompt: `Create a strategic synthesis for this fused intelligence package.
 
@@ -2566,6 +2817,7 @@ export const askContextualQuestion = async (
     history: ChatMessage[],
     options?: QuestionAnswerOptions,
 ): Promise<string> => {
+    const reasoningEngine = getReasoningEngineDescriptor(options?.reasoningEngineId);
     try {
         const retrievalContext =
             options?.readPathContext?.retrievalContext ||
@@ -2582,7 +2834,11 @@ export const askContextualQuestion = async (
                 Boolean(options?.fastMode),
                 options?.maxKnowledgeSummaryChars,
             );
-        const answerTimeoutMs = options?.answerTimeoutMs || (options?.fastMode ? FAST_QA_TIMEOUT_MS : REQUEST_TIMEOUT_MS);
+        const answerTimeoutMs = options?.answerTimeoutMs || (
+            reasoningEngine.surface === "cloud"
+                ? (options?.fastMode ? 30000 : 45000)
+                : (options?.fastMode ? FAST_QA_TIMEOUT_MS : REQUEST_TIMEOUT_MS)
+        );
 
         const prompt = `CONTEXT PACKAGE:
 ${knowledgeSnapshot}
@@ -2596,12 +2852,18 @@ ${historyText || "No prior exchanges."}
 QUESTION:
 ${question}`;
 
+        const startTime = Date.now();
+        console.info("[askContextualQuestion] Starting generation...");
         const answer = await CognitiveGateway.generate({
             prompt,
+            model: reasoningEngine.model,
+            reasoningEngineId: reasoningEngine.id,
+            geminiApiKey: options?.geminiApiKey,
             systemInstruction:
-                "Answer as TEVEL's local intelligence copilot. Be evidence-grounded, direct, and cite exact evidence ids in square brackets when available. Avoid inventing facts that are not present in the context package.",
+                "You are TEVEL's intelligence analysis copilot. Answer strictly based on the provided context package and retrieved evidence. Do NOT invent facts, translations, or definitions not present in the context. Do NOT repeat yourself. If the context lacks relevant information, say so clearly and stop. Cite evidence IDs in square brackets when available. Be concise and direct.",
             timeoutMs: answerTimeoutMs,
         });
+        console.info(`[askContextualQuestion] Generation finished in ${Date.now() - startTime}ms`);
         if (!contextData.retrieval_artifacts) return answer;
 
         const answerId = options?.answerId || `chat_${Date.now()}`;
@@ -2624,10 +2886,7 @@ ${question}`;
     } catch (error) {
         console.error("Question answering failed:", error);
         const message = error instanceof Error ? error.message : String(error);
-        if (/timed out/i.test(message)) {
-            return "Local model timed out while answering the question.";
-        }
-        return "Comms offline: unable to reach the local model.";
+        return buildReasoningFailureMessage(/timed out/i.test(message) ? "timeout" : "offline", reasoningEngine);
     }
 };
 
@@ -2700,7 +2959,7 @@ Return one concise analytical summary paragraph focused on what the cross-refere
         });
     } catch (error) {
         console.error("Cross-reference reanalysis failed:", error);
-        return "Unable to deepen analysis: the local model could not complete the fusion scan.";
+        return "Unable to deepen analysis: the reasoning engine could not complete the fusion scan.";
     }
 };
 
@@ -2727,7 +2986,7 @@ FORMAT:
         });
     } catch (error) {
         console.error("Extended profile generation failed:", error);
-        return "## Identity\nLocal profile generation is unavailable.\n\n## Network Role\nThe local model could not expand this entity at the moment.";
+        return "## Identity\nProfile generation is unavailable.\n\n## Network Role\nThe reasoning engine could not expand this entity at the moment.";
     }
 };
 

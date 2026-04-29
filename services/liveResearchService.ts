@@ -1,4 +1,14 @@
-import { askContextualQuestion, isEntityMatch } from "./intelligenceService";
+import {
+  askContextualQuestion,
+  classifyReasoningFailure,
+  getReasoningEngineDescriptor,
+  isEntityMatch,
+  PRIMARY_REASONING_ENGINE,
+  type ReasoningEngineDescriptor,
+  type ReasoningEngineId,
+  type ReasoningEngineSurface,
+  type ReasoningFailureKind,
+} from "./intelligenceService";
 import type { IntelligencePackage, StudyItem, Entity, Relation, ContextCard, Insight, TimelineEvent, Statement, IntelQuestion, IntelTask, ChatMessage } from "../types";
 import type { RetrievalArtifacts, RetrievalEvidenceBundle, RetrievalEvidenceHit } from "./sidecar/retrieval";
 import type { StructuredSummaryPanel } from "./sidecar/summarization/contracts";
@@ -98,6 +108,15 @@ export interface LiveResearchCorpus {
   warnings: string[];
 }
 
+export interface LiveResearchEngineTrace {
+  engineId: ReasoningEngineDescriptor["id"];
+  engineLabel: string;
+  engineSurface: ReasoningEngineSurface;
+  responseMode: "model-answer" | "verified-synthesis" | "deterministic-fallback";
+  failureKind?: ReasoningFailureKind;
+  failureMessage?: string;
+}
+
 export interface LiveResearchAnswer {
   answer: string;
   sources: LiveResearchSource[];
@@ -105,7 +124,13 @@ export interface LiveResearchAnswer {
   warnings: string[];
   verificationNote?: string;
   citationGuard: "active" | "limited";
+  engineTrace?: LiveResearchEngineTrace;
   fcfAudit?: FcfR3AuditSummary;
+}
+
+export interface LiveResearchQuestionOptions {
+  reasoningEngineId?: ReasoningEngineId;
+  geminiApiKey?: string;
 }
 
 type ScoredStudy = {
@@ -902,7 +927,55 @@ const averageReliability = (studies: StudyItem[]): number => {
   return Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(2));
 };
 
-const buildEntityScopedFallback = (question: string, corpus: LiveResearchCorpus): string | null => {
+const buildDeterministicFallbackNotice = (
+  isHebrew: boolean,
+  engineSurface: ReasoningEngineSurface,
+  failureKind: ReasoningFailureKind,
+): string => {
+  if (isHebrew) {
+    if (engineSurface === "cloud") {
+      return failureKind === "timeout"
+        ? "מנוע ההסקה בענן לא החזיר תשובה בזמן, לכן התשובה הורכבה באופן דטרמיניסטי מתוך הראיות וכרטיסי ההקשר הקיימים."
+        : "מנוע ההסקה בענן לא היה זמין, לכן התשובה הורכבה באופן דטרמיניסטי מתוך הראיות וכרטיסי ההקשר הקיימים.";
+    }
+    return failureKind === "timeout"
+      ? "המודל המקומי לא החזיר תשובה בזמן, לכן התשובה הורכבה באופן דטרמיניסטי מתוך הראיות וכרטיסי ההקשר הקיימים."
+      : "המודל המקומי לא היה זמין, לכן התשובה הורכבה באופן דטרמיניסטי מתוך הראיות וכרטיסי ההקשר הקיימים.";
+  }
+
+  if (engineSurface === "cloud") {
+    return failureKind === "timeout"
+      ? "The cloud reasoning engine did not answer in time, so this answer was assembled deterministically from stored evidence and context cards."
+      : "The cloud reasoning engine was unavailable, so this answer was assembled deterministically from stored evidence and context cards.";
+  }
+
+  return failureKind === "timeout"
+    ? "The local model did not answer in time, so this answer was assembled deterministically from stored evidence and context cards."
+    : "The local model was unavailable, so this answer was assembled deterministically from stored evidence and context cards.";
+};
+
+const buildLiveResearchEngineTrace = (
+  reasoningFailure: ReturnType<typeof classifyReasoningFailure>,
+  engine: ReasoningEngineDescriptor = PRIMARY_REASONING_ENGINE,
+): LiveResearchEngineTrace => ({
+  engineId: engine.id,
+  engineLabel: engine.label,
+  engineSurface: engine.surface,
+  responseMode: reasoningFailure ? "deterministic-fallback" : "model-answer",
+  failureKind: reasoningFailure?.kind,
+  failureMessage: reasoningFailure?.message,
+});
+
+const answerCitesSelectedEvidence = (answerText: string, evidenceIds: string[]): boolean => {
+  if (!evidenceIds.length) return false;
+  return evidenceIds.some((evidenceId) => answerText.includes(`[${evidenceId}]`) || answerText.includes(evidenceId));
+};
+
+const buildEntityScopedFallback = (
+  question: string,
+  corpus: LiveResearchCorpus,
+  engineTrace?: LiveResearchEngineTrace,
+): string | null => {
   const queryPhrases = extractQueryPhrases(question);
   const queryTerms = splitTerms(question);
   const isHebrewQuestion = /[\u0590-\u05FF]/u.test(question);
@@ -934,6 +1007,11 @@ const buildEntityScopedFallback = (question: string, corpus: LiveResearchCorpus)
     .filter((task) => normalize(task.task_text).includes(normalize(entity.name)))
     .slice(0, 3)
     .map((task) => `- ${task.task_text} (${task.urgency})`);
+  const fallbackNotice = buildDeterministicFallbackNotice(
+    isHebrewQuestion,
+    engineTrace?.engineSurface || PRIMARY_REASONING_ENGINE.surface,
+    engineTrace?.failureKind || "offline",
+  );
 
   if (isHebrewQuestion) {
     const hebrewLines = [
@@ -949,7 +1027,7 @@ const buildEntityScopedFallback = (question: string, corpus: LiveResearchCorpus)
         : "",
       relatedQuestions.length ? `שאלות פתוחות:\n${relatedQuestions.join("\n")}` : "",
       relatedTasks.length ? `משימות פתוחות:\n${relatedTasks.join("\n")}` : "",
-      "המודל המקומי לא היה זמין, לכן התשובה הורכבה באופן דטרמיניסטי מתוך הראיות וכרטיסי ההקשר הקיימים.",
+      fallbackNotice,
     ].filter(Boolean);
 
     return hebrewLines.join("\n\n");
@@ -968,7 +1046,7 @@ const buildEntityScopedFallback = (question: string, corpus: LiveResearchCorpus)
       : "",
     relatedQuestions.length ? `Open questions:\n${relatedQuestions.join("\n")}` : "",
     relatedTasks.length ? `Open tasks:\n${relatedTasks.join("\n")}` : "",
-    "Local model was unavailable, so this answer was assembled deterministically from stored evidence and context cards.",
+    fallbackNotice,
   ].filter(Boolean);
 
   return lines.join("\n\n");
@@ -990,20 +1068,32 @@ const persistLiveResearchReadPath = async (
   question: string,
   run: FcfR3ReadPathRun,
   citationRun?: CitationVerificationRun,
+  auditOverrides: Partial<FcfR3AuditSummary> = {},
 ): Promise<{ audit: FcfR3AuditSummary; warning?: string }> => {
+  const enrichedRun: FcfR3ReadPathRun =
+    Object.keys(auditOverrides).length > 0
+      ? {
+          ...run,
+          audit: {
+            ...run.audit,
+            ...auditOverrides,
+          },
+        }
+      : run;
+
   try {
     const persisted = await persistFcfR3Run(
       buildFcfR3PersistedRun({
         caseId,
         question,
-        readPathRun: run,
+        readPathRun: enrichedRun,
         answerId,
         citationRun,
       }),
     );
     return {
       audit: {
-        ...run.audit,
+        ...enrichedRun.audit,
         run_id: persisted.run.run_id,
         case_id: persisted.run.case_id,
         answer_id: answerId,
@@ -1014,7 +1104,7 @@ const persistLiveResearchReadPath = async (
     console.warn("FCF-R3 persistence failed for live research", error);
     return {
       audit: {
-        ...run.audit,
+        ...enrichedRun.audit,
         case_id: caseId,
         answer_id: answerId,
         persistence_status: "failed",
@@ -1151,7 +1241,9 @@ export const askLiveResearchQuestion = async (
   studies: StudyItem[],
   history: ChatMessage[],
   selectedStudyIds?: string[],
+  options: LiveResearchQuestionOptions = {},
 ): Promise<LiveResearchAnswer> => {
+  const reasoningEngine = getReasoningEngineDescriptor(options.reasoningEngineId);
   const corpus = buildLiveResearchCorpus(question, studies, selectedStudyIds);
 
   if (corpus.scope.scopedStudies === 0) {
@@ -1165,8 +1257,8 @@ export const askLiveResearchQuestion = async (
   }
 
   const fcfRun = buildFcfR3ReadPath(question, corpus.package, {
-    maxContextChars: 5200,
-    maxEvidenceItems: 8,
+    maxContextChars: reasoningEngine.surface === "cloud" ? 12000 : 5200,
+    maxEvidenceItems: reasoningEngine.surface === "cloud" ? 15 : 8,
     maxSnippetChars: 420,
   });
   const fcfCaseId = buildLiveResearchCaseId(corpus, selectedStudyIds);
@@ -1183,7 +1275,9 @@ export const askLiveResearchQuestion = async (
     fastMode: true,
     caseId: fcfCaseId,
     answerId: fcfAnswerId,
-    answerTimeoutMs: 1800000, // 30 minutes to accommodate very slow local execution
+    reasoningEngineId: reasoningEngine.id,
+    geminiApiKey: options.geminiApiKey,
+    answerTimeoutMs: reasoningEngine.surface === "cloud" ? 45000 : 90000,
     maxKnowledgeSummaryChars: 900,
     onCitationVerification: (run) => {
       citationRun = run;
@@ -1194,15 +1288,40 @@ export const askLiveResearchQuestion = async (
       candidateEvidenceIds: fcfRun.audit.selected_evidence_ids,
     },
   });
-  const verificationNote = answer.match(/Citation verification:[^\n]+/i)?.[0];
-  const offlineFallback = buildEntityScopedFallback(question, corpus);
-  const fcfFallback = buildFcfR3DeterministicAnswer(question, fcfRun);
-  const finalAnswer =
-    /comms offline|timed out|unable to reach the local model/i.test(answer)
-      ? `${offlineFallback || fcfFallback}\n\n${answer}`
-      : answer;
+  let verificationNote = answer.match(/Citation verification:[^\n]+/i)?.[0];
+  // Strip the inline citation line from the body — it is surfaced separately in verificationNote
+  const answerWithoutCitationNote = answer.replace(/\n*Citation verification:[^\n]+/gi, "").trim();
+  const reasoningFailure = classifyReasoningFailure(answerWithoutCitationNote, reasoningEngine);
+  const engineTrace = buildLiveResearchEngineTrace(reasoningFailure, reasoningEngine);
+  const offlineFallback = buildEntityScopedFallback(question, corpus, engineTrace);
+  const fcfFallback = buildFcfR3DeterministicAnswer(question, fcfRun, {
+    reasoningEngineSurface: engineTrace.engineSurface,
+    failureKind: engineTrace.failureKind || "offline",
+  });
+  const modelAnswerIsWeaklyGrounded =
+    !reasoningFailure &&
+    fcfRun.selected.length > 0 &&
+    (!answerCitesSelectedEvidence(answerWithoutCitationNote, fcfRun.audit.selected_evidence_ids) ||
+      (citationRun && citationRun.supported_claim_rate < 0.5));
+
+  const verifiedSynthesis = modelAnswerIsWeaklyGrounded
+    ? buildFcfR3DeterministicAnswer(question, fcfRun, {
+        reasoningEngineSurface: engineTrace.engineSurface,
+        failureKind: "offline",
+        includeFallbackNotice: false,
+      })
+    : "";
+
+  if (modelAnswerIsWeaklyGrounded) {
+    engineTrace.responseMode = "verified-synthesis";
+    verificationNote = undefined;
+  }
+
+  const finalAnswer = reasoningFailure
+    ? fcfFallback || offlineFallback || answerWithoutCitationNote
+    : verifiedSynthesis || answerWithoutCitationNote;
   let citationWarning: string | undefined;
-  if (!citationRun) {
+  if (!citationRun || reasoningFailure || modelAnswerIsWeaklyGrounded) {
     try {
       citationRun = await verifyAnswerCitations({
         caseId: fcfCaseId,
@@ -1217,7 +1336,14 @@ export const askLiveResearchQuestion = async (
       citationWarning = "Citation verification failed for the persisted FCF-R3 run.";
     }
   }
-  const persistedReadPath = await persistLiveResearchReadPath(fcfCaseId, fcfAnswerId, question, fcfRun, citationRun);
+  const persistedReadPath = await persistLiveResearchReadPath(fcfCaseId, fcfAnswerId, question, fcfRun, citationRun, {
+    reasoning_engine_label: engineTrace.engineLabel,
+    reasoning_engine_surface: engineTrace.engineSurface,
+    reasoning_outcome: engineTrace.responseMode,
+    reasoning_failure_kind: engineTrace.failureKind,
+    supported_claim_rate: citationRun?.supported_claim_rate,
+    citation_status: citationRun?.overall_status,
+  });
   const persistedVerificationNote =
     verificationNote ||
     (citationRun
@@ -1231,11 +1357,13 @@ export const askLiveResearchQuestion = async (
     warnings: uniqueStrings([
       ...corpus.warnings,
       ...fcfRun.audit.warnings,
+      engineTrace.failureMessage || "",
       citationWarning || "",
       persistedReadPath.warning || "",
     ]).slice(0, 8),
     verificationNote: persistedVerificationNote,
     citationGuard: fcfRun.retrieval_artifacts.item_count > 0 ? "active" : "limited",
+    engineTrace,
     fcfAudit: persistedReadPath.audit,
   };
 };
