@@ -1209,6 +1209,8 @@ ${JSON.stringify(schema, null, 2)}`;
                         format: params.format,
                         options: {
                             temperature: 0.2,
+                            num_ctx: 3200,
+                            num_predict: 1000,
                         },
                         messages: [
                             {
