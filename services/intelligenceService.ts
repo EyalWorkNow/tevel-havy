@@ -19,6 +19,9 @@ import {
     DocumentMetadata,
 } from "../types";
 import { EntityCreationEngine, ExtractedEntityLike } from "./intelligence/entityCreation";
+import { refineAnswerWithCitationVerification, verifyAnswerCitations } from "./sidecar/citationVerification/service";
+import type { CitationVerificationRun } from "./sidecar/citationVerification/contracts";
+import type { RetrievalEvidenceHit } from "./sidecar/retrieval";
 
 type JsonSchema = Record<string, unknown>;
 
@@ -169,6 +172,20 @@ type RuntimeReasoningIndex = {
     entityNeighbors: Map<string, string[]>;
 };
 
+type QuestionAnswerOptions = {
+    fastMode?: boolean;
+    answerTimeoutMs?: number;
+    caseId?: string;
+    answerId?: string;
+    maxKnowledgeSummaryChars?: number;
+    onCitationVerification?: (run: CitationVerificationRun) => void | Promise<void>;
+    readPathContext?: {
+        knowledgeSnapshot?: string;
+        retrievalContext?: string;
+        candidateEvidenceIds?: string[];
+    };
+};
+
 const JSON_TYPES = {
     object: "object",
     array: "array",
@@ -186,7 +203,8 @@ const boundedEnvInt = (name: string, fallback: number, min: number, max: number)
 const DEFAULT_OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434";
 const DEFAULT_OLLAMA_MODEL = process.env.OLLAMA_MODEL || "gemma4:e4b";
 const DEFAULT_OLLAMA_EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || "embeddinggemma";
-const REQUEST_TIMEOUT_MS = 90000;
+const REQUEST_TIMEOUT_MS = 120000;
+const FAST_QA_TIMEOUT_MS = 60000;
 const MAX_CHUNK_CHARS = 4200;
 const CHUNK_OVERLAP_CHARS = 320;
 const MAX_CONTEXT_EXCERPT_CHARS = 8000;
@@ -270,8 +288,8 @@ class DataAlgorithmEngine {
         });
 
         relations.forEach((relation) => {
-            const source = typeof relation.source === "string" ? relation.source : relation.source.name;
-            const target = typeof relation.target === "string" ? relation.target : relation.target.name;
+            const source = relation.source;
+            const target = relation.target;
 
             if (!uniqueNodes.has(source)) {
                 uniqueNodes.set(source, { id: source, group: 8, type: "MISC" });
@@ -307,6 +325,15 @@ class DataAlgorithmEngine {
             case "REGION":
             case "FACILITY":
                 return 3;
+            case "VEHICLE":
+                return 4;
+            case "IDENTIFIER":
+            case "FINANCIAL_ACCOUNT":
+            case "COMMUNICATION_CHANNEL":
+            case "DIGITAL_ASSET":
+            case "DEVICE":
+            case "DOCUMENT":
+            case "CARGO":
             case "OBJECT":
             case "ASSET":
             case "WEAPON":
@@ -512,6 +539,12 @@ class KnowledgeFusionEngine {
         if (normalized === "ORG") return "ORGANIZATION";
         if (normalized === "OBJECT") return "ASSET";
         if (normalized === "INCIDENT") return "EVENT";
+        if (["URL", "EMAIL", "IP", "DOMAIN", "WALLET", "HOSTNAME"].includes(normalized)) return "DIGITAL_ASSET";
+        if (["ACCOUNT", "BANK_ACCOUNT", "IBAN", "SWIFT", "CARD", "PAYMENT_ACCOUNT"].includes(normalized)) return "FINANCIAL_ACCOUNT";
+        if (["PHONE", "TELEGRAM", "WHATSAPP", "SIGNAL", "HANDLE"].includes(normalized)) return "COMMUNICATION_CHANNEL";
+        if (["SERVER", "ROUTER", "MODEM", "CAMERA", "RADIO", "LAPTOP", "TABLET", "HANDSET"].includes(normalized)) return "DEVICE";
+        if (["REPORT", "FORM", "CONTRACT", "INVOICE", "PASSPORT", "MANIFEST", "LICENSE", "CERTIFICATE", "MEMO", "DOSSIER"].includes(normalized)) return "DOCUMENT";
+        if (["CONTAINER", "PALLET", "SHIPMENT", "PARCEL", "CRATE"].includes(normalized)) return "CARGO";
         if (!normalized) return "MISC";
         return normalized;
     }
@@ -960,23 +993,30 @@ class KnowledgeFusionEngine {
         return Number((confidences.reduce((sum, value) => sum + value, 0) / confidences.length).toFixed(2));
     }
 
-    static buildKnowledgeSnapshot(pkg: IntelligencePackage): string {
+    static buildKnowledgeSnapshot(pkg: IntelligencePackage, compact = false, summaryCharLimit?: number): string {
+        const entityLimit = compact ? 24 : 40;
+        const relationLimit = compact ? 30 : 50;
+        const insightLimit = compact ? 10 : 15;
+        const timelineLimit = compact ? 10 : 20;
+        const statementLimit = compact ? 12 : 20;
+        const summaryLimit = compact ? summaryCharLimit ?? 1200 : undefined;
+
         return JSON.stringify(
             {
-                summary: pkg.clean_text,
+                summary: summaryLimit ? pkg.clean_text.slice(0, summaryLimit) : pkg.clean_text,
                 entityCount: pkg.entities.length,
                 relationCount: pkg.relations.length,
-                entities: pkg.entities.slice(0, 40).map((entity) => ({
+                entities: pkg.entities.slice(0, entityLimit).map((entity) => ({
                     name: entity.name,
                     type: entity.type,
                     description: entity.description,
                     confidence: entity.confidence,
                 })),
-                relations: pkg.relations.slice(0, 50),
-                insights: pkg.insights.slice(0, 15),
-                timeline: (pkg.timeline || []).slice(0, 20),
+                relations: pkg.relations.slice(0, relationLimit),
+                insights: pkg.insights.slice(0, insightLimit),
+                timeline: (pkg.timeline || []).slice(0, timelineLimit),
                 tactical_assessment: pkg.tactical_assessment,
-                statements: (pkg.statements || []).slice(0, 20).map((statement) => ({
+                statements: (pkg.statements || []).slice(0, statementLimit).map((statement) => ({
                     text: statement.statement_text,
                     category: statement.category,
                     impact: statement.impact,
@@ -1048,6 +1088,13 @@ class KnowledgeFusionEngine {
  */
 class CognitiveGateway {
     private static buildBaseUrls(): string[] {
+        const isBrowser = typeof window !== "undefined";
+        if (isBrowser) {
+            const configuredUrl = DEFAULT_OLLAMA_BASE_URL.trim();
+            const browserUrls = configuredUrl.startsWith("/") ? [configuredUrl, "/ollama"] : ["/ollama"];
+            return Array.from(new Set(browserUrls));
+        }
+
         const urls = [DEFAULT_OLLAMA_BASE_URL];
 
         if (
@@ -1141,64 +1188,69 @@ ${JSON.stringify(schema, null, 2)}`;
         systemInstruction?: string;
         schema?: JsonSchema;
         format?: JsonSchema | "json";
+        timeoutMs?: number;
     }): Promise<string> {
-        const controller = new AbortController();
-        const timeoutId = globalThis.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+        const timeoutMs = params.timeoutMs || REQUEST_TIMEOUT_MS;
         let lastError: Error | null = null;
 
-        try {
-            for (const baseUrl of this.buildBaseUrls()) {
-                try {
-                    const response = await fetch(`${this.normalizeBaseUrl(baseUrl)}/api/chat`, {
-                        method: "POST",
-                        headers: {
-                            "Content-Type": "application/json",
+        for (const baseUrl of this.buildBaseUrls()) {
+            const controller = new AbortController();
+            const timeoutId = globalThis.setTimeout(() => controller.abort(), timeoutMs);
+
+            try {
+                const response = await fetch(`${this.normalizeBaseUrl(baseUrl)}/api/chat`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                        model: params.model,
+                        stream: false,
+                        format: params.format,
+                        options: {
+                            temperature: 0.2,
                         },
-                        body: JSON.stringify({
-                            model: params.model,
-                            stream: false,
-                            format: params.format,
-                            options: {
-                                temperature: 0.2,
+                        messages: [
+                            {
+                                role: "system",
+                                content: this.buildSystemInstruction(params.systemInstruction, params.schema),
                             },
-                            messages: [
-                                {
-                                    role: "system",
-                                    content: this.buildSystemInstruction(params.systemInstruction, params.schema),
-                                },
-                                {
-                                    role: "user",
-                                    content: params.prompt,
-                                },
-                            ],
-                        }),
-                        signal: controller.signal,
-                    });
+                            {
+                                role: "user",
+                                content: params.prompt,
+                            },
+                        ],
+                    }),
+                    signal: controller.signal,
+                });
 
-                    if (!response.ok) {
-                        throw new Error(`Ollama request failed with status ${response.status}.`);
-                    }
+                if (!response.ok) {
+                    throw new Error(`Ollama request failed with status ${response.status}.`);
+                }
 
-                    const data = (await response.json()) as OllamaResponse;
-                    if (data.error) {
-                        throw new Error(data.error);
-                    }
+                const data = (await response.json()) as OllamaResponse;
+                if (data.error) {
+                    throw new Error(data.error);
+                }
 
-                    const content = data.message?.content || data.response || "";
-                    if (!content.trim()) {
-                        throw new Error("Local model returned an empty response.");
-                    }
+                const content = data.message?.content || data.response || "";
+                if (!content.trim()) {
+                    throw new Error("Local model returned an empty response.");
+                }
 
-                    return content.trim();
-                } catch (error) {
+                return content.trim();
+            } catch (error: any) {
+                if (error.name === "AbortError" || error.message?.includes("aborted")) {
+                    lastError = new Error("Local model request timed out.");
+                } else {
                     lastError = error instanceof Error ? error : new Error(String(error));
                 }
+            } finally {
+                globalThis.clearTimeout(timeoutId);
             }
-
-            throw lastError || new Error("Unable to reach the local model.");
-        } finally {
-            globalThis.clearTimeout(timeoutId);
         }
+
+        throw lastError || new Error("Unable to reach the local model.");
     }
 
     static async generate(params: {
@@ -1206,6 +1258,7 @@ ${JSON.stringify(schema, null, 2)}`;
         model?: string;
         systemInstruction?: string;
         schema?: JsonSchema;
+        timeoutMs?: number;
     }): Promise<string> {
         const model = params.model || DEFAULT_OLLAMA_MODEL;
 
@@ -1216,6 +1269,7 @@ ${JSON.stringify(schema, null, 2)}`;
                 systemInstruction: params.systemInstruction,
                 schema: params.schema,
                 format: params.schema,
+                timeoutMs: params.timeoutMs,
             });
 
             return params.schema ? this.extractJsonBlock(content) : content;
@@ -1232,6 +1286,7 @@ Return a valid JSON object only. Do not add explanations.`,
                 systemInstruction: params.systemInstruction,
                 schema: params.schema,
                 format: "json",
+                timeoutMs: params.timeoutMs,
             });
 
             return this.extractJsonBlock(fallbackContent);
@@ -1688,7 +1743,11 @@ class RetrievalReasoningEngine {
                     this.embeddingCache.set(uncached[index], embedding);
                 });
 
-                return new Map(texts.map((text) => [text, this.embeddingCache.get(text)!]).filter(([, value]) => Boolean(value)));
+                const cachedEntries: Array<[string, number[]]> = texts.flatMap((text) => {
+                    const value = this.embeddingCache.get(text);
+                    return value ? [[text, value]] : [];
+                });
+                return new Map(cachedEntries);
             } catch (error) {
                 console.warn("Embedding request failed:", error);
             }
@@ -1756,7 +1815,12 @@ Return candidate ids ordered from most useful to least useful.`,
         return candidates.slice().sort((a, b) => (rankMap.get(a.id) ?? 999) - (rankMap.get(b.id) ?? 999));
     }
 
-    static async retrieve(query: string, pkg: IntelligencePackage, topK = 8): Promise<RuntimeEvidenceItem[]> {
+    static async retrieve(
+        query: string,
+        pkg: IntelligencePackage,
+        topK = 8,
+        options?: QuestionAnswerOptions,
+    ): Promise<RuntimeEvidenceItem[]> {
         const index = await this.getIndex(pkg);
         const queryTerms = this.normalizeQueryTerms(query);
         const queryEntityNames = this.detectEntitiesInText(query, pkg.entities);
@@ -1785,7 +1849,31 @@ Return candidate ids ordered from most useful to least useful.`,
         );
 
         if (!shortlist.length) {
+            if (options?.fastMode) {
+                return index.evidence
+                    .slice()
+                    .sort((left, right) => right.graphWeight - left.graphWeight)
+                    .slice(0, Math.max(4, Math.min(topK, 6)));
+            }
             return index.evidence.slice(0, Math.max(topK, this.getAdaptiveTopK(pkg)));
+        }
+
+        if (options?.fastMode) {
+            return shortlist
+                .map((item) => ({
+                    evidence: item.evidence,
+                    score:
+                        item.lexical * 0.58 +
+                        item.structural * 0.3 +
+                        (queryEntityNames.some((entityName) =>
+                            item.evidence.entityNames.some((candidate) => DataAlgorithmEngine.isEntityMatch(candidate, entityName))
+                        )
+                            ? 0.12
+                            : 0),
+                }))
+                .sort((a, b) => b.score - a.score)
+                .slice(0, Math.max(4, Math.min(topK, 6)))
+                .map((item) => item.evidence);
         }
 
         const embeddingTexts = [query, ...shortlist.map((item) => item.evidence.text.slice(0, 1000))];
@@ -1825,9 +1913,48 @@ Return candidate ids ordered from most useful to least useful.`,
         return reranked.slice(0, Math.max(topK, this.getAdaptiveTopK(pkg)));
     }
 
-    static async buildAnswerContext(query: string, pkg: IntelligencePackage): Promise<string> {
+    private static selectRelevantCitableEvidence(
+        query: string,
+        pkg: IntelligencePackage,
+        limit: number,
+    ): RetrievalEvidenceHit[] {
+        const queryTerms = this.normalizeQueryTerms(query);
+        const queryEntityNames = this.detectEntitiesInText(query, pkg.entities);
+
+        return Object.values(pkg.retrieval_artifacts?.bundles || {})
+            .flatMap((bundle) => bundle.hits)
+            .filter((hit) => !hit.reference_only && (hit.evidence_id || hit.item_id))
+            .map((hit) => {
+                const normalizedSnippet = KnowledgeFusionEngine.normalizeEntityKey(hit.snippet);
+                const lexicalScore = queryTerms.length
+                    ? queryTerms.filter((term) => normalizedSnippet.includes(term)).length / queryTerms.length
+                    : 0;
+                const entityScore = queryEntityNames.some((entityName) =>
+                    hit.related_entities.some((candidate) => DataAlgorithmEngine.isEntityMatch(candidate, entityName))
+                )
+                    ? 0.6
+                    : 0;
+                const phraseScore = hit.related_entities.some((candidate) =>
+                    KnowledgeFusionEngine.normalizeEntityKey(query).includes(KnowledgeFusionEngine.normalizeEntityKey(candidate))
+                )
+                    ? 0.45
+                    : 0;
+
+                return {
+                    hit,
+                    relevance: lexicalScore * 1.5 + entityScore + phraseScore + hit.score * 0.08,
+                };
+            })
+            .filter((item) => item.relevance > 0)
+            .sort((left, right) => right.relevance - left.relevance)
+            .slice(0, limit)
+            .map((item) => item.hit);
+    }
+
+    static async buildAnswerContext(query: string, pkg: IntelligencePackage, options?: QuestionAnswerOptions): Promise<string> {
         const index = await this.getIndex(pkg);
-        const evidence = await this.retrieve(query, pkg, this.getAdaptiveTopK(pkg));
+        const evidence = await this.retrieve(query, pkg, this.getAdaptiveTopK(pkg), options);
+        const citableEvidence = this.selectRelevantCitableEvidence(query, pkg, options?.fastMode ? 6 : 10);
         const relevantCommunities = index.communities
             .filter((community) =>
                 evidence.some((item) => item.communityId === community.id) ||
@@ -1836,16 +1963,29 @@ Return candidate ids ordered from most useful to least useful.`,
                 )
             )
             .slice(0, 4);
+        const citableSnippetLimit = options?.fastMode ? 280 : 700;
+        const topEvidenceLimit = options?.fastMode ? 320 : 900;
 
         return [
             "COMMUNITY VIEW:",
             relevantCommunities.map((community) => `- ${community.summary}`).join("\n") || "- None",
             "",
+            "CITABLE EVIDENCE:",
+            citableEvidence.length
+                ? citableEvidence
+                      .map((item) => {
+                          const id = item.evidence_id || item.item_id;
+                          const state = item.version_state ? ` | version=${item.version_state}` : "";
+                          return `[${id}${state}] ${item.snippet.slice(0, citableSnippetLimit)}`;
+                      })
+                      .join("\n\n")
+                : "- No exact evidence atoms available; answer conservatively.",
+            "",
             "TOP EVIDENCE:",
             evidence
                 .map(
                     (item, index) =>
-                        `[${index + 1}] ${item.title}\n${item.text.slice(0, 900)}`
+                        `[${index + 1}] ${item.title}\n${item.text.slice(0, topEvidenceLimit)}`
                 )
                 .join("\n\n"),
         ].join("\n");
@@ -2421,17 +2561,29 @@ EVIDENCE:
 export const askContextualQuestion = async (
     question: string,
     contextData: IntelligencePackage,
-    history: ChatMessage[]
+    history: ChatMessage[],
+    options?: QuestionAnswerOptions,
 ): Promise<string> => {
     try {
-        const retrievalContext = await RetrievalReasoningEngine.buildAnswerContext(question, contextData);
+        const retrievalContext =
+            options?.readPathContext?.retrievalContext ||
+            await RetrievalReasoningEngine.buildAnswerContext(question, contextData, options);
+        const historyLimit = options?.fastMode ? 4 : 6;
         const historyText = history
-            .slice(-6)
+            .slice(-historyLimit)
             .map((item) => `${item.role}: ${item.content}`)
             .join("\n");
+        const knowledgeSnapshot =
+            options?.readPathContext?.knowledgeSnapshot ||
+            KnowledgeFusionEngine.buildKnowledgeSnapshot(
+                contextData,
+                Boolean(options?.fastMode),
+                options?.maxKnowledgeSummaryChars,
+            );
+        const answerTimeoutMs = options?.answerTimeoutMs || (options?.fastMode ? FAST_QA_TIMEOUT_MS : REQUEST_TIMEOUT_MS);
 
         const prompt = `CONTEXT PACKAGE:
-${KnowledgeFusionEngine.buildKnowledgeSnapshot(contextData)}
+${knowledgeSnapshot}
 
 RETRIEVAL CONTEXT:
 ${retrievalContext}
@@ -2442,13 +2594,37 @@ ${historyText || "No prior exchanges."}
 QUESTION:
 ${question}`;
 
-        return await CognitiveGateway.generate({
+        const answer = await CognitiveGateway.generate({
             prompt,
             systemInstruction:
-                "Answer as TEVEL's local intelligence copilot. Be evidence-grounded, direct, and avoid inventing facts that are not present in the context package.",
+                "Answer as TEVEL's local intelligence copilot. Be evidence-grounded, direct, and cite exact evidence ids in square brackets when available. Avoid inventing facts that are not present in the context package.",
+            timeoutMs: answerTimeoutMs,
         });
+        if (!contextData.retrieval_artifacts) return answer;
+
+        const answerId = options?.answerId || `chat_${Date.now()}`;
+        const verification = await verifyAnswerCitations({
+            caseId: options?.caseId || contextData.version_validity?.case_id || answerId,
+            answerId,
+            answerText: answer,
+            retrievalArtifacts: contextData.retrieval_artifacts,
+            versionValidity: contextData.version_validity,
+            candidateEvidenceIds: options?.readPathContext?.candidateEvidenceIds,
+        });
+        if (options?.onCitationVerification) {
+            try {
+                await options.onCitationVerification(verification);
+            } catch (error) {
+                console.warn("Citation verification callback failed", error);
+            }
+        }
+        return refineAnswerWithCitationVerification(answer, verification);
     } catch (error) {
         console.error("Question answering failed:", error);
+        const message = error instanceof Error ? error.message : String(error);
+        if (/timed out/i.test(message)) {
+            return "Local model timed out while answering the question.";
+        }
         return "Comms offline: unable to reach the local model.";
     }
 };
