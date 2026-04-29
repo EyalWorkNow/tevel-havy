@@ -24,7 +24,7 @@ Tevel uses a hybrid architecture designed for performance and local privacy:
 
 - **Node.js** (v20+ recommended)
 - **Ollama**: Running locally with the following models:
-  - `ollama pull gemma4:e4b` (Recommended chat model)
+  - `ollama pull qwen3.5:4b` (Recommended chat model)
   - `ollama pull embeddinggemma` (Optional, for semantic retrieval)
 
 ### Installation
@@ -52,7 +52,7 @@ Configure your environment via `.env.local` to override default settings:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `OLLAMA_MODEL` | The chat model used for synthesis | `gemma4:e4b` |
+| `OLLAMA_MODEL` | The chat model used for synthesis | `qwen3.5:4b` |
 | `OLLAMA_BASE_URL` | Local Ollama API endpoint | `http://127.0.0.1:11434` |
 | `TEVEL_ENABLE_FASTCOREF` | Enable coreference resolution | `0` |
 | `TEVEL_ANALYSIS_CONCURRENCY` | Parallel extraction chunks | `2` |
