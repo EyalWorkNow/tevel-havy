@@ -15,6 +15,9 @@ import {
   EntityIntelligenceDebugReport,
 } from "./sidecar/entityIntelligence/types";
 import { PersonDossier, PersonExtractionResponse, PersonResolutionResponse } from "./sidecar/person/types";
+import { VersionValidityReport } from "./sidecar/versionValidity/contracts";
+import { CitationVerificationRun } from "./sidecar/citationVerification/contracts";
+import { RetrievalArtifacts } from "./sidecar/retrieval";
 
 type ParseUploadResponse = {
   raw_content: string;
@@ -40,12 +43,14 @@ type GeocodeResponse = {
 };
 
 const SIDE_CAR_PREFIX = "/api/sidecar";
-const SIDE_CAR_TIMEOUT_MS = 8000;
-const SIDE_CAR_PARSE_TIMEOUT_MS = 20000;
-const SIDE_CAR_HEAVY_PARSE_TIMEOUT_MS = 120000;
-const SIDE_CAR_PERSON_TIMEOUT_MS = 12000;
-const SIDE_CAR_SMART_EXTRACT_MAX_TIMEOUT_MS = 45000;
-const SIDE_CAR_PERSON_EXTRACT_MAX_TIMEOUT_MS = 30000;
+const SIDE_CAR_TIMEOUT_MS = 60000;
+const SIDE_CAR_PARSE_TIMEOUT_MS = 60000;
+const SIDE_CAR_HEAVY_PARSE_TIMEOUT_MS = 300000;
+const SIDE_CAR_PERSON_TIMEOUT_MS = 60000;
+const SIDE_CAR_SMART_EXTRACT_BASE_TIMEOUT_MS = 1800000;
+const SIDE_CAR_SMART_EXTRACT_MAX_TIMEOUT_MS = 1800000;
+const SIDE_CAR_PERSON_EXTRACT_BASE_TIMEOUT_MS = 1800000;
+const SIDE_CAR_PERSON_EXTRACT_MAX_TIMEOUT_MS = 1800000;
 const SIDE_CAR_AVAILABILITY_CACHE_TTL_MS = 5000;
 
 let availabilityPromise: Promise<boolean> | null = null;
@@ -83,7 +88,7 @@ const estimateTextAwareTimeoutMs = (
 
 const estimateSmartExtractTimeoutMs = (rawContent: string): number =>
   estimateTextAwareTimeoutMs(rawContent, {
-    baseMs: Math.max(SIDE_CAR_TIMEOUT_MS, 12000),
+    baseMs: SIDE_CAR_SMART_EXTRACT_BASE_TIMEOUT_MS,
     charsPerStep: 2200,
     msPerStep: 500,
     maxMs: SIDE_CAR_SMART_EXTRACT_MAX_TIMEOUT_MS,
@@ -91,7 +96,7 @@ const estimateSmartExtractTimeoutMs = (rawContent: string): number =>
 
 const estimatePersonExtractTimeoutMs = (rawText: string): number =>
   estimateTextAwareTimeoutMs(rawText, {
-    baseMs: SIDE_CAR_PERSON_TIMEOUT_MS,
+    baseMs: SIDE_CAR_PERSON_EXTRACT_BASE_TIMEOUT_MS,
     charsPerStep: 2400,
     msPerStep: 450,
     maxMs: SIDE_CAR_PERSON_EXTRACT_MAX_TIMEOUT_MS,
@@ -480,6 +485,66 @@ export const runEntityIntelligenceWithSidecar = async (payload: {
     );
   } catch (error) {
     console.warn("Entity intelligence run failed", error);
+    return null;
+  }
+};
+
+export const runVersionValidityWithSidecar = async (payload: {
+  caseId: string;
+  payload: SidecarExtractionPayload;
+}): Promise<VersionValidityReport | null> => {
+  if (!payload.payload || !(await isLocalSidecarAvailable())) return null;
+  try {
+    return await postJson<VersionValidityReport>("/api/version-validity/run", payload, SIDE_CAR_TIMEOUT_MS);
+  } catch (error) {
+    console.warn("Version validity run failed", error);
+    return null;
+  }
+};
+
+export const getVersionValidityWithSidecar = async (caseId: string): Promise<VersionValidityReport | null> => {
+  if (!caseId || !(await isLocalSidecarAvailable())) return null;
+  try {
+    return await withTimeout(`/api/cases/${encodeURIComponent(caseId)}/version-validity`, async (signal) => {
+      const response = await fetch(`/api/cases/${encodeURIComponent(caseId)}/version-validity`, { signal });
+      if (response.status === 404) return null;
+      if (!response.ok) throw new Error(`Version validity request failed with status ${response.status}`);
+      return response.json();
+    }, SIDE_CAR_TIMEOUT_MS);
+  } catch (error) {
+    console.warn("Version validity lookup failed", error);
+    return null;
+  }
+};
+
+export const verifyCitationsWithSidecar = async (payload: {
+  caseId: string;
+  answerId?: string;
+  answerText: string;
+  retrievalArtifacts?: RetrievalArtifacts;
+  versionValidity?: VersionValidityReport;
+  candidateEvidenceIds?: string[];
+}): Promise<CitationVerificationRun | null> => {
+  if (!payload.answerText.trim() || !(await isLocalSidecarAvailable())) return null;
+  try {
+    return await postJson<CitationVerificationRun>("/api/citation/verify", payload, SIDE_CAR_TIMEOUT_MS);
+  } catch (error) {
+    console.warn("Citation verification failed", error);
+    return null;
+  }
+};
+
+export const getCitationVerificationWithSidecar = async (caseId: string): Promise<CitationVerificationRun | null> => {
+  if (!caseId || !(await isLocalSidecarAvailable())) return null;
+  try {
+    return await withTimeout(`/api/cases/${encodeURIComponent(caseId)}/citation-verification`, async (signal) => {
+      const response = await fetch(`/api/cases/${encodeURIComponent(caseId)}/citation-verification`, { signal });
+      if (response.status === 404) return null;
+      if (!response.ok) throw new Error(`Citation verification request failed with status ${response.status}`);
+      return response.json();
+    }, SIDE_CAR_TIMEOUT_MS);
+  } catch (error) {
+    console.warn("Citation verification lookup failed", error);
     return null;
   }
 };
