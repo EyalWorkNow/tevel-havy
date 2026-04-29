@@ -1183,7 +1183,7 @@ export const askLiveResearchQuestion = async (
     fastMode: true,
     caseId: fcfCaseId,
     answerId: fcfAnswerId,
-    answerTimeoutMs: 120_000,
+    answerTimeoutMs: 1800000, // 30 minutes to accommodate very slow local execution
     maxKnowledgeSummaryChars: 900,
     onCitationVerification: (run) => {
       citationRun = run;

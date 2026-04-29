@@ -201,10 +201,10 @@ const boundedEnvInt = (name: string, fallback: number, min: number, max: number)
 };
 
 const DEFAULT_OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434";
-const DEFAULT_OLLAMA_MODEL = process.env.OLLAMA_MODEL || "gemma4:e4b";
+const DEFAULT_OLLAMA_MODEL = process.env.OLLAMA_MODEL || "qwen3.5:4b";
 const DEFAULT_OLLAMA_EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || "embeddinggemma";
-const REQUEST_TIMEOUT_MS = 120000;
-const FAST_QA_TIMEOUT_MS = 60000;
+const REQUEST_TIMEOUT_MS = 1800000;
+const FAST_QA_TIMEOUT_MS = 1800000;
 const MAX_CHUNK_CHARS = 4200;
 const CHUNK_OVERLAP_CHARS = 320;
 const MAX_CONTEXT_EXCERPT_CHARS = 8000;
