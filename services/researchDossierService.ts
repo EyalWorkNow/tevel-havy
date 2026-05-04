@@ -9,6 +9,7 @@ import {
   ResearchDossier,
   ResearchEntityBrief,
 } from "../types";
+import { getActiveResearchProfiles, getResearchProfile } from "./researchProfiles";
 import type { RetrievalEvidenceBundle, RetrievalEvidenceHit } from "./sidecar/retrieval";
 import type { StructuredSummaryPanel } from "./sidecar/summarization/contracts";
 
@@ -110,8 +111,8 @@ const buildNetworkNote = (entityName: string, relations: Relation[], hebrew: boo
 
   if (topRelations.length > 0) return topRelations.join(". ");
   return hebrew
-    ? `${entityName} עדיין חסר מיפוי קשרים מלא ולכן נדרש איסוף משלים.`
-    : `${entityName} still lacks a fully mapped network picture, so additional collection is needed.`;
+    ? `${entityName} עדיין חסר מיפוי קשרים מלא ולכן נדרשת בדיקת המשך.`
+    : `${entityName} still lacks a fully mapped network picture, so follow-up review is needed.`;
 };
 
 const buildThreadWhyItMatters = (
@@ -211,8 +212,8 @@ const defaultActionsByKind = (bundle: RetrievalEvidenceBundle, entityNames: stri
     default:
       return [
         hebrew
-          ? `להרחיב את האיסוף סביב ${lead} כדי להפוך את הציר מממצא לסיפור מחקרי סגור יותר.`
-          : `Expand collection around ${lead} so the thread moves from a finding toward a closed investigative story.`,
+          ? `להרחיב את בדיקת הראיות סביב ${lead} כדי להפוך את הציר מממצא לסיפור מחקרי סגור יותר.`
+          : `Expand evidence review around ${lead} so the thread moves from a finding toward a closed research story.`,
       ];
   }
 };
@@ -389,8 +390,8 @@ const buildEntityBriefs = (pkg: IntelligencePackage, threads: InvestigationThrea
           relatedThreads[0]?.why_it_matters ||
           contextCard?.summary ||
           (hebrew
-            ? `${entity.name} בולט בתמונה אך נדרש עליו עוד איסוף ממוקד.`
-            : `${entity.name} stands out in the picture, but still needs focused collection.`),
+            ? `${entity.name} בולט בתמונה אך נדרשת עליו בדיקת ראיות ממוקדת.`
+            : `${entity.name} stands out in the picture, but still needs focused evidence review.`),
         strongest_signal:
           strongestSignal ||
           (hebrew
@@ -412,6 +413,10 @@ const buildEntityBriefs = (pkg: IntelligencePackage, threads: InvestigationThrea
 
 export const buildResearchDossier = (pkg: IntelligencePackage): ResearchDossier => {
   const hebrew = isHebrewDominant(pkg);
+  const profile = getResearchProfile(pkg.research_profile);
+  const activeProfiles = getActiveResearchProfiles(pkg.research_profile_detection, pkg.research_profile);
+  const profileStackLabel = activeProfiles.map((profileId) => getResearchProfile(profileId).label).join(" + ");
+  const profileConfidence = pkg.research_profile_detection ? Math.round(pkg.research_profile_detection.confidence * 100) : null;
   const bundles = Object.values(pkg.retrieval_artifacts?.bundles || {});
   const questions = pkg.intel_questions || [];
   const tasks = pkg.intel_tasks || [];
@@ -441,11 +446,11 @@ export const buildResearchDossier = (pkg: IntelligencePackage): ResearchDossier 
           .filter(Boolean)
           .join(" ")
       : hebrew
-        ? "טרם נבנה דוח חקירתי מלא עבור החומר הנוכחי."
-        : "A full investigative dossier has not been built for the current material yet.";
+        ? `טרם נבנה דוח ${profile.label} מלא עבור החומר הנוכחי.`
+        : `A full ${profile.label.toLowerCase()} dossier has not been built for the current material yet.`;
   const operatingPicture = hebrew
-    ? `נבנו ${priorityThreads.length} צירי חקירה פעילים. ${corroboratedThreads} מהם נתמכים ביותר מפריט ראיה אחד, ו-${contradictionThreads} כוללים סתירות או אזהרות פעילות. המוקדים המרכזיים כעת: ${leadTitles.join(", ") || "ללא מוקדים בולטים"}.`
-    : `${priorityThreads.length} active investigation threads were assembled. ${corroboratedThreads} are backed by more than one evidence item, and ${contradictionThreads} include active contradictions or warnings. Current focal points: ${leadTitles.join(", ") || "none yet"}.`;
+    ? `נבנו ${priorityThreads.length} צירי ${profile.label} פעילים בפרופיל ${profileStackLabel}${profileConfidence ? ` (${profileConfidence}% ביטחון)` : ""}. ${corroboratedThreads} מהם נתמכים ביותר מפריט ראיה אחד, ו-${contradictionThreads} כוללים סתירות או אזהרות פעילות. המוקדים המרכזיים כעת: ${leadTitles.join(", ") || "ללא מוקדים בולטים"}.`
+    : `${priorityThreads.length} active ${profile.label.toLowerCase()} threads were assembled under the ${profileStackLabel} profile stack${profileConfidence ? ` (${profileConfidence}% confidence)` : ""}. ${corroboratedThreads} are backed by more than one evidence item, and ${contradictionThreads} include active contradictions or warnings. Current focal points: ${leadTitles.join(", ") || "none yet"}.`;
 
   const pressurePoints = uniqueStrings(
     priorityThreads.map((thread) =>

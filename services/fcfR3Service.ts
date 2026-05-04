@@ -2,14 +2,31 @@ import type { Entity, Insight, IntelligencePackage, Relation, Statement, Timelin
 import type {
   RetrievalArtifacts,
   RetrievalBundleKind,
+  RetrievalEvidenceCluster,
   RetrievalEvidenceHit,
+  RetrievalEvidenceType,
   RetrievalItemType,
 } from "./sidecar/retrieval";
 import type { VersionValidityState } from "./sidecar/versionValidity/contracts";
 import { normalizeLookupText } from "./sidecar/textUnits";
 
-type FcfR3RouteMode = "case" | "entity" | "relationship" | "timeline" | "contradiction" | "update";
+type FcfR3RouteMode = "case" | "entity" | "entity_context_analysis" | "relationship" | "timeline" | "contradiction" | "update";
 type FcfR3TaskFamily = "general" | "financial" | "temporal" | "policy" | "risk";
+type FcfR3ContextType =
+  | "strategic_command"
+  | "operational_control"
+  | "finance"
+  | "technology_equipment"
+  | "logistics"
+  | "proxy_geography"
+  | "human_operators"
+  | "communications"
+  | "doctrine_tactics"
+  | "institutional_actors"
+  | "limiting_evidence"
+  | "general_context";
+type FcfR3EvidencePolarity = "positive_link" | "boundary_of_involvement" | "alternative_actor" | "contradiction_qualification";
+type FcfR3ClusterStatus = "confirmed_direct" | "corroborated" | "indirect_indicator" | "hypothesis_eei" | "weak_noisy";
 type FcfR3AnswerStatus =
   | "current-supported"
   | "historical-only"
@@ -31,14 +48,19 @@ export interface FcfR3QueryPlan {
   raw_query: string;
   normalized_query: string;
   terms: string[];
+  expanded_terms: string[];
   entities: string[];
   dates: string[];
   mode: FcfR3RouteMode;
   task_family: FcfR3TaskFamily;
+  broad_entity_context: boolean;
+  wants_exhaustive_context: boolean;
   wants_current: boolean;
   citation_required: boolean;
   max_evidence_items: number;
   max_context_chars: number;
+  allowed_source_doc_ids: string[];
+  allow_cross_source: boolean;
 }
 
 export interface FcfR3EvidenceAtom {
@@ -73,7 +95,14 @@ export interface FcfR3ScoreBreakdown {
   source_trust: number;
   novelty: number;
   task_family_match: number;
+  entity_relevance: number;
+  analytical_importance: number;
+  directness: number;
+  cluster_diversity: number;
   cost_penalty: number;
+  duplicate_penalty: number;
+  boilerplate_penalty: number;
+  isolated_token_penalty: number;
   final_score: number;
 }
 
@@ -82,6 +111,13 @@ export interface FcfR3SelectedEvidence {
   score: number;
   reason_selected: string[];
   score_breakdown: FcfR3ScoreBreakdown;
+  evidence_type: RetrievalEvidenceType;
+  cluster_id: string;
+  cluster_label: string;
+  entity_grounded: boolean;
+  context_type: FcfR3ContextType;
+  cluster_priority: number;
+  evidence_polarity: FcfR3EvidencePolarity;
 }
 
 export type FcfR3ReasoningEngineSurface = "cloud" | "local";
@@ -97,9 +133,21 @@ export interface FcfR3AuditSummary {
   candidate_count: number;
   pruned_count: number;
   selected_count: number;
+  cluster_count?: number;
+  direct_evidence_count?: number;
+  weak_evidence_count?: number;
   context_chars: number;
   estimated_input_tokens: number;
   selected_evidence_ids: string[];
+  found_context_types?: FcfR3ContextType[];
+  missing_context_types?: FcfR3ContextType[];
+  context_coverage_score?: number;
+  coverage_complete?: boolean;
+  second_pass_retrieval?: boolean;
+  coverage_checklist?: Record<string, "found" | "not_found" | "partial">;
+  source_doc_ids?: string[];
+  source_consistent?: boolean;
+  traceability_rate?: number;
   route_mode: FcfR3RouteMode;
   task_family: FcfR3TaskFamily;
   warnings: string[];
@@ -114,6 +162,7 @@ export interface FcfR3AuditSummary {
 export interface FcfR3ReadPathRun {
   query_plan: FcfR3QueryPlan;
   selected: FcfR3SelectedEvidence[];
+  evidence_clusters: RetrievalEvidenceCluster[];
   materialized_context: string;
   knowledge_snapshot: string;
   retrieval_artifacts: RetrievalArtifacts;
@@ -124,6 +173,10 @@ type FcfR3BuildOptions = {
   maxEvidenceItems?: number;
   maxContextChars?: number;
   maxSnippetChars?: number;
+  contextProfile?: "compact" | "verbose";
+  allowedSourceDocIds?: string[];
+  allowCrossSource?: boolean;
+  minTraceabilityRate?: number;
 };
 
 const QUERY_STOPWORDS = new Set([
@@ -203,6 +256,36 @@ const isEntityMatch = (left: string, right: string): boolean => {
   );
 };
 
+const entityMentionVariants = (queryPlan: FcfR3QueryPlan): string[] =>
+  uniqueStrings([
+    ...queryPlan.entities,
+    ...queryPlan.entities.flatMap((entity) => tokenize(entity).filter((term) => term.length > 3)),
+  ]);
+
+const hasEntityMention = (value: string, variants: string[]): boolean => {
+  const normalized = normalizeLookupText(value);
+  return variants.some((variant) => {
+    const normalizedVariant = normalizeLookupText(variant);
+    return Boolean(
+      normalizedVariant &&
+        (normalized.includes(normalizedVariant) ||
+          (normalizedVariant.length > 3 && normalizedVariant.split(/\s+/).some((part) => part.length > 3 && normalized.includes(part)))),
+    );
+  });
+};
+
+const atomHasQueryEntityGrounding = (atom: FcfR3EvidenceAtom, queryPlan: FcfR3QueryPlan): boolean => {
+  if (!queryPlan.entities.length) return true;
+  const variants = entityMentionVariants(queryPlan);
+  if (/\b(?:unrelated to|not related to|no connection to|אינו קשור|לא קשור)\b/i.test(atom.text) && hasEntityMention(atom.text, variants)) {
+    return false;
+  }
+  return (
+    hasEntityMention(`${atom.title} ${atom.text}`, variants) ||
+    atom.entity_anchors.some((anchor) => variants.some((variant) => isEntityMatch(anchor, variant)))
+  );
+};
+
 const inferTaskFamily = (value: string): FcfR3TaskFamily => {
   const normalized = normalizeLookupText(value);
   if (/(price|cost|budget|fund|payment|finance|כסף|תקציב|תשלום|מימון|פיננס)/i.test(normalized)) return "financial";
@@ -214,6 +297,7 @@ const inferTaskFamily = (value: string): FcfR3TaskFamily => {
 
 const inferMode = (query: string): FcfR3RouteMode => {
   const normalized = normalizeLookupText(query);
+  if (isBroadEntityContextQuery(query)) return "entity_context_analysis";
   if (/(current|latest|valid|בתוקף|עדכני|האחרון|עכשיו)/i.test(normalized)) return "update";
   if (/(contradiction|conflict|סתירה|סותר|קונפליקט)/i.test(normalized)) return "contradiction";
   if (/(timeline|when|ציר זמן|מתי|תאריכים)/i.test(normalized)) return "timeline";
@@ -222,42 +306,260 @@ const inferMode = (query: string): FcfR3RouteMode => {
   return "case";
 };
 
+const isBroadEntityContextQuery = (query: string): boolean =>
+  /\b(?:entity\s*context|context|contexts|analysis|analyze|meaning|significance|implication|role|network|pattern|relationship|synthesis|what does it mean)\b|הקשר|ניתוח|משמעות|מה זה אומר|תפקיד|קשרים|רשת|דפוס|מסקנה|תמונה|הערכה/i.test(
+    query,
+  );
+
+const queryWantsHypotheses = (query: string): boolean =>
+  /\b(?:hypothesis|hypotheses|speculative|speculation|unsupported|eei|collection requirement|what is not confirmed)\b|השערה|השערות|ספקולטיבי|לא מאושר|לא נתמך|דרישת בירור/i.test(
+    query,
+  );
+
+const queryWantsExhaustiveContext = (query: string): boolean =>
+  /\b(?:all contexts|all relevant contexts|full context|complete context|comprehensive|coverage|every context|find all)\b|כל ההקשרים|כלל ההקשרים|כיסוי מלא|מקיף|מלא/i.test(
+    query,
+  );
+
+const queryAllowsCrossSourceSearch = (query: string): boolean =>
+  /\b(?:all database|entire database|global search|cross[-\s]?case|across cases|compare cases|all reports|other cases|full db|whole corpus)\b|בכל המאגר|כל המאגר|חיפוש גלובלי|בין כל התיקים|השווה בין.*תיקים|עוד תיקים|כל הדוחות/i.test(
+    query,
+  );
+
+const isHypothesisText = (value: string): boolean =>
+  /(hypothesis|assumption|eei|requires collection|not confirmed|question for collection|intelligence requirement|request for clarification|investigate whether|השערה|לבירור|דרישת בירור|לא מאושר|נדרש אימות|שאלת בירור)/i.test(
+    value,
+  );
+
+const isIndirectIndicatorText = (value: string): boolean =>
+  /(logo|site footer|phone prefix|location label|foreign-funded|foreign funded|organizational association|possible link|possible indication|may indicate|suggests access|support website|indirect support|לוגו|קידומת|תיוג מיקום|ממומן זר|אינדיקציה אפשרית|קשר אפשרי|תמיכה עקיפה)/i.test(
+    value,
+  );
+
+const isDirectFinanceEvidenceText = (value: string): boolean =>
+  /(transferred payments|cryptocurrency payments|wire transfer|transaction record|bank transfer|wallet transfer|finance cell transferred|financing cell transferred|paid for|financed the|hawala|העברת כספים|העביר תשלום|מימן|מימנה|רשומת עסקה|תשלום קריפטו)/i.test(
+    value,
+  );
+
+const expandEntityTerms = (query: string, pkg: IntelligencePackage, terms: string[]): string[] => {
+  const matchedEntities = (pkg.entities || []).filter((entity) =>
+    [entity.name, ...(entity.aliases || [])].some((candidate) =>
+      terms.some((term) => isEntityMatch(candidate, term) || normalizeLookupText(candidate).includes(term)),
+    ),
+  );
+  const relatedNames = (pkg.relations || []).flatMap((relation) => {
+    const touchesMatched = matchedEntities.some((entity) => [relation.source, relation.target].some((name) => isEntityMatch(name, entity.name)));
+    return touchesMatched ? [relation.source, relation.target, relation.type] : [];
+  });
+  const broadAnalyticalTerms = isBroadEntityContextQuery(query)
+    ? [
+        "relationship",
+        "role",
+        "activity",
+        "claim",
+        "event",
+        "funding",
+        "contact",
+        "evidence",
+        "context",
+        "קשר",
+        "תפקיד",
+        "פעילות",
+        "טענה",
+        "אירוע",
+        "מימון",
+        "ראיה",
+        "הקשר",
+      ]
+    : [];
+
+  return uniqueStrings([
+    ...terms,
+    ...matchedEntities.flatMap((entity) => [entity.name, ...(entity.aliases || [])]),
+    ...relatedNames,
+    ...broadAnalyticalTerms,
+  ]).slice(0, 40);
+};
+
+const inferEvidenceType = (atom: FcfR3EvidenceAtom, score: FcfR3ScoreBreakdown): RetrievalEvidenceType => {
+  const penalties = score.boilerplate_penalty + score.isolated_token_penalty + score.duplicate_penalty;
+  if (penalties > 0.16 || (score.directness < 0.32 && score.analytical_importance < 0.28)) return "weak_noisy_evidence";
+  if (atom.kind === "relation" && !atom.evidence_id) return "weak_noisy_evidence";
+  if (isHypothesisText(atom.text)) {
+    return "hypothesis_eei";
+  }
+  if (isIndirectIndicatorText(atom.text) && !isDirectFinanceEvidenceText(atom.text)) return "indirect_evidence";
+  if (score.directness >= 0.72) return "direct_evidence";
+  if (score.directness >= 0.52 || score.analytical_importance >= 0.52) return "corroborating_evidence";
+  return "indirect_evidence";
+};
+
+const relationHasValidBoundary = (value: string): boolean => {
+  const normalized = value.trim();
+  const tokenCount = tokenize(normalized).length;
+  return (
+    tokenCount >= 1 &&
+    tokenCount <= 6 &&
+    normalized.length >= 2 &&
+    normalized.length <= 80 &&
+    !/^(?:של|את|עם|כי|אם|על|אל|from|to|of|the|and|or)\b/i.test(normalized) &&
+    !/\b(?:כי|אשר|שבו|where|that)\b/i.test(normalized)
+  );
+};
+
+const relationLooksMalformed = (relation: Relation): boolean => {
+  const predicate = normalizeLookupText(relation.type || "");
+  const acceptedPredicates = /associated|communicated|fund|moved|owned|alias|part|used|operated|met|linked|קשר|מימון|תקשורת|פגש|הפעיל|שייך/i;
+  return (
+    relation.confidence < 0.72 ||
+    !relationHasValidBoundary(relation.source) ||
+    !relationHasValidBoundary(relation.target) ||
+    !acceptedPredicates.test(predicate) ||
+    normalizeLookupText(relation.source) === normalizeLookupText(relation.target)
+  );
+};
+
+const relationSupportingText = (relation: Relation, statements: Statement[]): string => {
+  const linkedStatement = relation.statement_id
+    ? statements.find((statement) => statement.statement_id === relation.statement_id)
+    : undefined;
+  if (linkedStatement?.statement_text) return linkedStatement.statement_text;
+  return "";
+};
+
+const inferEntityAnchorsFromText = (text: string, entities: Entity[]): string[] =>
+  uniqueStrings(
+    entities
+      .filter((entity) => [entity.name, ...(entity.aliases || [])].some((candidate) => hasEntityMention(text, [candidate])))
+      .flatMap((entity) => [entity.name, ...(entity.aliases || [])]),
+  );
+
+const EXPECTED_CONTEXT_TYPES: FcfR3ContextType[] = [
+  "strategic_command",
+  "operational_control",
+  "institutional_actors",
+  "finance",
+  "technology_equipment",
+  "logistics",
+  "communications",
+  "proxy_geography",
+  "human_operators",
+  "doctrine_tactics",
+  "limiting_evidence",
+];
+
+const contextTypeLabel = (contextType: FcfR3ContextType): string =>
+  ({
+    strategic_command: "Strategic command",
+    operational_control: "Operational control",
+    finance: "Finance",
+    technology_equipment: "Technology / equipment",
+    logistics: "Logistics",
+    proxy_geography: "Proxy / geography",
+    human_operators: "Human operators",
+    communications: "Communications",
+    doctrine_tactics: "Doctrine / tactics",
+    institutional_actors: "Command/control",
+    limiting_evidence: "Boundary / alternative actor",
+    general_context: "General context",
+  })[contextType];
+
+const inferContextType = (value: string): FcfR3ContextType => {
+  const normalized = normalizeLookupText(value);
+  if (/(not (?:by|from|controlled by|funded by|operated by)|instead|rather than|alternative actor|not done by|did not|was not|לא בוצע על ידי|לא על ידי|אלא על ידי|גורם אחר|אינו מוכיח מעורבות ישירה)/i.test(normalized)) return "limiting_evidence";
+  if (/(strategic|command|headquarters|directive|commander|פיקוד|אסטרטג|מפקד|הנחיה)/i.test(normalized)) return "strategic_command";
+  if (/(operational control|controlled|directed|handler|supervised|tasked|control cell|שליטה|הפעיל|ניהל|כוון|מפעיל)/i.test(normalized)) return "operational_control";
+  if (/(finance|fund|payment|transfer|bank|hawala|money|budget|מימון|כסף|תשלום|העברה|תקציב)/i.test(normalized)) return "finance";
+  if (/(technology|vendor|equipment|device|drone|uav|sensor|camera|cyber|software|tnt|explosive|ציוד|טכנולוג|רחפן|חיישן|מצלמה|סייבר|מערכת)/i.test(normalized)) return "technology_equipment";
+  if (/(communication|comms|telegram|signal|phone|channel|relay|message|תקשורת|טלגרם|טלפון|ערוץ|הודעה|קשר)/i.test(normalized)) return "communications";
+  if (/(doctrine|tactic|ttp|modus|tradecraft|method|pattern|דוקטרינה|טקטיק|שיטה|דפוס)/i.test(normalized)) return "doctrine_tactics";
+  if (/(logistics|shipment|transport|route|safehouse|vehicle|warehouse|supply|לוגיסט|משלוח|הובלה|רכב|מחסן|אספקה)/i.test(normalized)) return "logistics";
+  if (/(istanbul|ankara|syria|proxy|geography|border|location|איסטנבול|אנקרה|סוריה|פרוקסי|גבול|מיקום)/i.test(normalized)) return "proxy_geography";
+  if (/(operator|agent|officer|asset|recruit|person|human|mit|operative|סוכן|מפעיל|קצין|פעיל|אדם|מיט)/i.test(normalized)) return "human_operators";
+  if (/(institution|agency|ministry|directorate|service|intelligence|company|vendor|mit|ארגון|סוכנות|משרד|מודיעין|חברה|מוסד)/i.test(normalized)) return "institutional_actors";
+  return "general_context";
+};
+
+const inferEvidencePolarity = (value: string): FcfR3EvidencePolarity => {
+  const normalized = normalizeLookupText(value);
+  if (/(contradict|conflict|qualification|מסייג|סתירה|סותר)/i.test(normalized)) return "contradiction_qualification";
+  // Check alternative_actor before boundary — "not X but Y" is a more specific pattern
+  if (/(instead|rather than|alternative actor|but (?:by|from|funded|operated|controlled)|אלא על ידי|גורם אחר)/i.test(normalized)) return "alternative_actor";
+  if (/(not (?:by|from|controlled by|funded by|operated by)|not done by|did not|was not|לא בוצע על ידי|לא על ידי|אינו מוכיח מעורבות ישירה)/i.test(normalized)) {
+    return "boundary_of_involvement";
+  }
+  return "positive_link";
+};
+
+const clusterPriority = (contextType: FcfR3ContextType, evidenceType: RetrievalEvidenceType, polarity: FcfR3EvidencePolarity, text: string): number => {
+  if (polarity !== "positive_link") return 1;
+  if (["weak_noisy_evidence", "hypothesis_eei"].includes(evidenceType)) return 4;
+  const normalized = normalizeLookupText(text);
+  if (isIndirectIndicatorText(text) && !isDirectFinanceEvidenceText(text)) return 4;
+  if (contextType === "finance" && isDirectFinanceEvidenceText(text)) return 1;
+  const directActorCue = /(direct operator|mit|agency|organization|organisational|organizational|command|control|handler|communicated with|operator|מפעיל ישיר|סוכנות|ארגון|פיקוד|שליטה|קשר ישיר)/i.test(normalized);
+  if (directActorCue || ["strategic_command", "operational_control", "institutional_actors"].includes(contextType)) return 1;
+  if (["finance", "technology_equipment", "logistics", "communications"].includes(contextType)) return 2;
+  if (["proxy_geography", "human_operators", "doctrine_tactics"].includes(contextType)) return 3;
+  return 3;
+};
+
+const clusterLabelForAtom = (atom: FcfR3EvidenceAtom): string => {
+  const entities = atom.entity_anchors.slice(0, 2).join(" / ");
+  const contextType = contextTypeLabel(inferContextType(`${atom.title} ${atom.text} ${atom.entity_anchors.join(" ")}`));
+  if (atom.contradiction_ids.length || atom.version_state === "contradicted") return "Conflict and contradiction signals";
+  if (atom.kind === "relation" || atom.item_type === "relation") return entities ? `${contextType}: ${entities}` : contextType;
+  if (atom.kind === "timeline" || atom.item_type === "event") return entities ? `${contextType}: ${entities}` : contextType;
+  if (atom.kind === "statement" || atom.item_type === "claim") return entities ? `${contextType}: ${entities}` : contextType;
+  if (atom.kind === "entity_context" || atom.item_type === "entity") return entities ? `${contextType}: ${entities}` : contextType;
+  if (atom.kind === "version_atom") return entities ? `${contextType}: ${entities}` : contextType;
+  return entities ? `${contextType}: ${entities}` : contextType;
+};
+
 export const compileFcfR3Query = (
   query: string,
   pkg: IntelligencePackage,
   options: FcfR3BuildOptions = {},
 ): FcfR3QueryPlan => {
   const terms = tokenize(query);
+  const expandedTerms = expandEntityTerms(query, pkg, terms);
   const normalized = normalizeLookupText(query);
   const entities = uniqueStrings(
     (pkg.entities || [])
       .filter((entity) =>
         [entity.name, ...(entity.aliases || [])].some((candidate) =>
-          terms.some((term) => isEntityMatch(candidate, term) || normalizeLookupText(candidate).includes(term)),
+          expandedTerms.some((term) => isEntityMatch(candidate, term) || normalizeLookupText(candidate).includes(term)),
         ),
       )
       .map((entity) => entity.name),
   );
+  const broadEntityContext = isBroadEntityContextQuery(query) && (entities.length > 0 || expandedTerms.length > terms.length);
+  const wantsExhaustiveContext = broadEntityContext && queryWantsExhaustiveContext(query);
 
   return {
     raw_query: query,
     normalized_query: normalized,
     terms,
+    expanded_terms: expandedTerms,
     entities,
     dates: extractDates(query),
     mode: inferMode(query),
     task_family: inferTaskFamily(query),
+    broad_entity_context: broadEntityContext,
+    wants_exhaustive_context: wantsExhaustiveContext,
     wants_current: /(current|latest|valid|בתוקף|עדכני|האחרון|עכשיו)/i.test(normalized),
     citation_required: true,
-    max_evidence_items: options.maxEvidenceItems ?? 8,
-    max_context_chars: options.maxContextChars ?? 5200,
+    max_evidence_items: options.maxEvidenceItems ?? (wantsExhaustiveContext ? 16 : broadEntityContext ? 12 : 8),
+    max_context_chars: options.maxContextChars ?? (wantsExhaustiveContext ? 9000 : broadEntityContext ? 7600 : 5200),
+    allowed_source_doc_ids: uniqueStrings(options.allowedSourceDocIds || []).filter(Boolean),
+    allow_cross_source: Boolean(options.allowCrossSource || queryAllowsCrossSourceSearch(query)),
   };
 };
 
 const textHash = (value: string): string => stableHash(normalizeLookupText(value));
 
 const makeAtom = (params: Omit<FcfR3EvidenceAtom, "text_hash" | "cost_chars" | "citation_id"> & { citation_id?: string }): FcfR3EvidenceAtom => {
-  const text = truncate(params.text, 900);
+  const text = truncate(params.text, 1200);
   const citationId = params.citation_id || params.evidence_id || params.atom_id;
   return {
     ...params,
@@ -293,7 +595,7 @@ const collectRetrievalAtoms = (pkg: IntelligencePackage): FcfR3EvidenceAtom[] =>
           source_text_unit_id: hit.source_text_unit_id,
           evidence_id: hit.evidence_id,
           title: bundle.title,
-          text: hit.snippet,
+          text: hit.context_window || hit.snippet,
           entity_anchors: uniqueStrings(hit.related_entities || []),
           time_anchors: uniqueStrings([hit.normalized_time_start || "", hit.normalized_time_end || ""]),
           version_state: hit.version_state || "unknown",
@@ -385,8 +687,8 @@ const collectStructuredAtoms = (pkg: IntelligencePackage): FcfR3EvidenceAtom[] =
       source_trust: pkg.reliability ?? 0.64,
       confidence: statement.confidence,
       task_family: inferTaskFamily(`${statement.category} ${statement.statement_text}`),
-      retrieval_score: 0.22,
-      contradiction_ids: statement.assumption_flag ? [statement.statement_id] : [],
+      retrieval_score: statement.assumption_flag || statement.intelligence_gap ? 0.12 : 0.22,
+      contradiction_ids: [],
       version_edge_ids: [],
       reference_only: false,
     }),
@@ -400,7 +702,7 @@ const collectStructuredAtoms = (pkg: IntelligencePackage): FcfR3EvidenceAtom[] =
       source_doc_id: pkg.document_metadata?.document_id || "package",
       title: `Insight: ${insight.type}`,
       text: insight.text,
-      entity_anchors: [],
+      entity_anchors: inferEntityAnchorsFromText(insight.text, pkg.entities || []),
       time_anchors: [],
       version_state: "unknown",
       validity_score: 0.58,
@@ -422,7 +724,7 @@ const collectStructuredAtoms = (pkg: IntelligencePackage): FcfR3EvidenceAtom[] =
       source_doc_id: pkg.document_metadata?.document_id || "package",
       title: `Timeline: ${event.date}`,
       text: `${event.date} - ${event.event}`,
-      entity_anchors: [],
+      entity_anchors: inferEntityAnchorsFromText(event.event, pkg.entities || []),
       time_anchors: [event.date],
       version_state: "unknown",
       validity_score: 0.58,
@@ -436,27 +738,31 @@ const collectStructuredAtoms = (pkg: IntelligencePackage): FcfR3EvidenceAtom[] =
     }),
   );
 
-  const relationAtoms = (pkg.relations || []).map((relation: Relation, index) =>
-    makeAtom({
-      atom_id: `fcf_relation_${index}_${stableHash(`${relation.source}:${relation.type}:${relation.target}`)}`,
-      kind: "relation",
-      item_type: "relation",
-      source_doc_id: pkg.document_metadata?.document_id || "package",
-      title: `Relation: ${relation.type}`,
-      text: `${relation.source} ${relation.type} ${relation.target}`,
-      entity_anchors: uniqueStrings([relation.source, relation.target]),
-      time_anchors: [],
-      version_state: "unknown",
-      validity_score: 0.58,
-      source_trust: pkg.reliability ?? 0.64,
-      confidence: relation.confidence,
-      task_family: inferTaskFamily(`${relation.type} ${relation.source} ${relation.target}`),
-      retrieval_score: 0.18,
-      contradiction_ids: [],
-      version_edge_ids: [],
-      reference_only: false,
-    }),
-  );
+  const relationAtoms = (pkg.relations || [])
+    .filter((relation: Relation) => !relationLooksMalformed(relation))
+    .map((relation: Relation, index) => {
+      const supportingText = relationSupportingText(relation, pkg.statements || []);
+      return makeAtom({
+        atom_id: `fcf_relation_${index}_${stableHash(`${relation.source}:${relation.type}:${relation.target}`)}`,
+        kind: "relation",
+        item_type: "relation",
+        source_doc_id: pkg.document_metadata?.document_id || "package",
+        evidence_id: relation.statement_id,
+        title: `Linked relation: ${relation.type}`,
+        text: supportingText || `${relation.source} ${relation.type} ${relation.target}`,
+        entity_anchors: uniqueStrings([relation.source, relation.target]),
+        time_anchors: [],
+        version_state: "unknown",
+        validity_score: 0.58,
+        source_trust: pkg.reliability ?? 0.64,
+        confidence: supportingText ? relation.confidence : Math.min(relation.confidence, 0.58),
+        task_family: inferTaskFamily(`${relation.type} ${relation.source} ${relation.target} ${supportingText}`),
+        retrieval_score: supportingText ? 0.18 : 0.08,
+        contradiction_ids: [],
+        version_edge_ids: [],
+        reference_only: false,
+      });
+    });
 
   return [...entityAtoms, ...statementAtoms, ...insightAtoms, ...timelineAtoms, ...relationAtoms];
 };
@@ -493,10 +799,32 @@ export const buildFcfR3EvidenceAtoms = (pkg: IntelligencePackage): FcfR3Evidence
     (atom) => atom.text.trim(),
   );
 
-const scoreAtom = (atom: FcfR3EvidenceAtom, queryPlan: FcfR3QueryPlan): FcfR3ScoreBreakdown => {
+const sourceMatchesAllowedScope = (sourceDocId: string, allowedSourceDocIds: string[]): boolean =>
+  allowedSourceDocIds.some((allowedId) => sourceDocId === allowedId || sourceDocId.startsWith(`${allowedId}:`));
+
+const filterAtomsBySourceScope = (
+  atoms: FcfR3EvidenceAtom[],
+  queryPlan: FcfR3QueryPlan,
+): { atoms: FcfR3EvidenceAtom[]; prunedCount: number; warnings: string[] } => {
+  if (!queryPlan.allowed_source_doc_ids.length || queryPlan.allow_cross_source) {
+    return { atoms, prunedCount: 0, warnings: [] };
+  }
+
+  const scopedAtoms = atoms.filter((atom) => sourceMatchesAllowedScope(atom.source_doc_id, queryPlan.allowed_source_doc_ids));
+  return {
+    atoms: scopedAtoms,
+    prunedCount: atoms.length - scopedAtoms.length,
+    warnings:
+      scopedAtoms.length === atoms.length
+        ? []
+        : [`Source scope pruned ${atoms.length - scopedAtoms.length} candidate(s) outside the active document/report/case.`],
+  };
+};
+
+const scoreAtom = (atom: FcfR3EvidenceAtom, queryPlan: FcfR3QueryPlan, seenTextHashes: Set<string>): FcfR3ScoreBreakdown => {
   const normalizedText = normalizeLookupText(`${atom.title} ${atom.text} ${atom.entity_anchors.join(" ")}`);
-  const matchedTerms = queryPlan.terms.filter((term) => normalizedText.includes(term));
-  const lexicalScore = queryPlan.terms.length ? matchedTerms.length / queryPlan.terms.length : 0;
+  const matchedTerms = queryPlan.expanded_terms.filter((term) => normalizedText.includes(normalizeLookupText(term)));
+  const lexicalScore = queryPlan.expanded_terms.length ? matchedTerms.length / queryPlan.expanded_terms.length : 0;
   const entityScore = queryPlan.entities.length
     ? queryPlan.entities.filter((entity) => atom.entity_anchors.some((anchor) => isEntityMatch(anchor, entity))).length /
       queryPlan.entities.length
@@ -504,25 +832,94 @@ const scoreAtom = (atom: FcfR3EvidenceAtom, queryPlan: FcfR3QueryPlan): FcfR3Sco
       ? 0.8
       : 0;
   const lexicalEntityMatch = Math.min(1, lexicalScore * 0.65 + entityScore * 0.55);
-  const versionValidity = atom.validity_score || VERSION_WEIGHT[atom.version_state];
+  const entityRelevance = Math.min(1, entityScore + Math.min(0.22, atom.entity_anchors.length * 0.04));
+  const analyticalImportance = Math.min(
+    1,
+    (atom.kind === "relation" ? 0.34 : 0) +
+      (atom.kind === "timeline" ? 0.26 : 0) +
+      (atom.kind === "statement" ? 0.24 : 0) +
+      (atom.kind === "retrieval_hit" ? 0.18 : 0) +
+      (atom.contradiction_ids.length ? 0.3 : 0) +
+      Math.min(0.16, atom.entity_anchors.length * 0.04) +
+      atom.confidence * 0.16,
+  );
+  const directness =
+    atom.item_type === "relation"
+      ? atom.evidence_id && atom.confidence >= 0.72
+        ? 0.66
+        : 0.28
+      : atom.item_type === "event"
+        ? 0.82
+        : atom.item_type === "claim"
+          ? isHypothesisText(atom.text)
+            ? 0.28
+            : isIndirectIndicatorText(atom.text) && !isDirectFinanceEvidenceText(atom.text)
+              ? 0.42
+            : /claimed|assessed|suspected|לפי|טען|העריך|חשד/i.test(atom.text)
+              ? 0.58
+              : 0.76
+          : atom.item_type === "mention"
+            ? 0.62
+            : atom.item_type === "text_unit" && entityScore > 0 && matchedTerms.length > 1
+              ? 0.58
+              : atom.item_type === "entity"
+                ? 0.44
+                : 0.34;
+  const rawVersionValidity = atom.validity_score || VERSION_WEIGHT[atom.version_state];
+  // Cap version validity for hypothesis/EEI atoms when the query doesn't explicitly want hypotheses
+  const versionValidity =
+    isHypothesisText(atom.text) && !queryWantsHypotheses(queryPlan.raw_query)
+      ? Math.min(0.2, rawVersionValidity)
+      : rawVersionValidity;
   const taskFamilyMatch = queryPlan.task_family === "general" || atom.task_family === queryPlan.task_family ? 1 : 0.35;
   const costPenalty = Math.min(0.18, atom.cost_chars / Math.max(1200, queryPlan.max_context_chars) * 0.25);
   const sourceTrust = Math.max(0.1, Math.min(1, atom.source_trust));
   const semanticRelevance = Math.max(0, Math.min(1, atom.retrieval_score));
-  const novelty = 0.78;
+  // Novelty: penalize content already seen in this scoring pass (same text hash = near-duplicate)
+  const novelty = seenTextHashes.has(atom.text_hash) ? 0.12 : 0.78;
+  const boilerplatePenalty = /copyright|table of contents|disclaimer|page \d+|עמוד|זכויות|תוכן עניינים/i.test(atom.text) ? 0.14 : 0;
+  const hypothesisPenalty = /(hypothesis|assumption|eei|requires collection|not confirmed|השערה|לבירור|דרישת בירור|לא מאושר)/i.test(atom.text)
+    ? 0.14
+    : 0;
+  const isolatedTokenPenalty =
+    matchedTerms.length === 1 &&
+    entityScore === 0 &&
+    (/^\d+$/.test(matchedTerms[0]) || matchedTerms[0].length <= 3)
+      ? 0.12
+      : 0;
+  const duplicatePenalty = 0;
   const currentPenalty =
     queryPlan.wants_current && ["historical", "superseded", "cancelled"].includes(atom.version_state) ? 0.16 : 0;
   const conflictPenalty = atom.version_state === "contradicted" ? 0.2 : 0;
-  const finalScore =
-    semanticRelevance * 0.25 +
-    lexicalEntityMatch * 0.2 +
-    versionValidity * 0.2 +
-    sourceTrust * 0.15 +
-    novelty * 0.1 +
-    taskFamilyMatch * 0.1 -
-    costPenalty -
-    currentPenalty -
-    conflictPenalty;
+  const finalScore = queryPlan.broad_entity_context
+    ? semanticRelevance * 0.16 +
+      lexicalEntityMatch * 0.14 +
+      entityRelevance * 0.18 +
+      analyticalImportance * 0.2 +
+      directness * 0.15 +
+      versionValidity * 0.08 +
+      sourceTrust * 0.06 +
+      taskFamilyMatch * 0.03 -
+      costPenalty -
+      currentPenalty -
+      conflictPenalty -
+      boilerplatePenalty -
+      hypothesisPenalty -
+      isolatedTokenPenalty -
+      duplicatePenalty
+    : semanticRelevance * 0.25 +
+      lexicalEntityMatch * 0.2 +
+      versionValidity * 0.2 +
+      sourceTrust * 0.15 +
+      novelty * 0.1 +
+      taskFamilyMatch * 0.1 -
+      costPenalty -
+      currentPenalty -
+      conflictPenalty -
+      boilerplatePenalty -
+      hypothesisPenalty -
+      isolatedTokenPenalty -
+      duplicatePenalty;
 
   return {
     semantic_relevance: round(semanticRelevance),
@@ -531,7 +928,14 @@ const scoreAtom = (atom: FcfR3EvidenceAtom, queryPlan: FcfR3QueryPlan): FcfR3Sco
     source_trust: round(sourceTrust),
     novelty: round(novelty),
     task_family_match: round(taskFamilyMatch),
-    cost_penalty: round(costPenalty + currentPenalty + conflictPenalty),
+    entity_relevance: round(entityRelevance),
+    analytical_importance: round(analyticalImportance),
+    directness: round(directness),
+    cluster_diversity: 0,
+    cost_penalty: round(costPenalty + currentPenalty + conflictPenalty + hypothesisPenalty),
+    duplicate_penalty: round(duplicatePenalty),
+    boilerplate_penalty: round(boilerplatePenalty),
+    isolated_token_penalty: round(isolatedTokenPenalty),
     final_score: round(Math.max(0, finalScore)),
   };
 };
@@ -549,14 +953,27 @@ const scoreAndPruneCandidates = (
   atoms: FcfR3EvidenceAtom[],
   queryPlan: FcfR3QueryPlan,
 ): { candidates: FcfR3SelectedEvidence[]; prunedCount: number; warnings: string[] } => {
+  const seenTextHashes = new Set<string>();
   const scored = atoms
     .map((atom) => {
-      const score = scoreAtom(atom, queryPlan);
+      const score = scoreAtom(atom, queryPlan, seenTextHashes);
+      seenTextHashes.add(atom.text_hash);
+      const evidenceType = inferEvidenceType(atom, score);
+      const clusterLabel = clusterLabelForAtom(atom);
+      const contextType = inferContextType(`${atom.title} ${atom.text} ${atom.entity_anchors.join(" ")}`);
+      const evidencePolarity = inferEvidencePolarity(`${atom.title} ${atom.text}`);
       return {
         atom,
         score: score.final_score,
         score_breakdown: score,
         reason_selected: reasonForSelection(atom, score, queryPlan),
+        evidence_type: evidenceType,
+        cluster_id: `cluster_${stableHash(`${contextType}:${clusterLabel}`)}`,
+        cluster_label: clusterLabel,
+        entity_grounded: atomHasQueryEntityGrounding(atom, queryPlan),
+        context_type: contextType,
+        cluster_priority: clusterPriority(contextType, evidenceType, evidencePolarity, `${atom.title} ${atom.text}`),
+        evidence_polarity: evidencePolarity,
       };
     })
     .filter((entry) => entry.score > 0.05 || entry.atom.contradiction_ids.length > 0);
@@ -570,13 +987,20 @@ const scoreAndPruneCandidates = (
   });
 
   const deduped = Array.from(byText.values());
+  const entityGrounded =
+    queryPlan.entities.length
+      ? deduped.filter((entry) => entry.entity_grounded || entry.atom.contradiction_ids.length > 0)
+      : deduped;
   const hasCurrent = deduped.some((entry) => entry.atom.version_state === "current");
   const validityPruned =
     queryPlan.wants_current && hasCurrent
-      ? deduped.filter((entry) => !["cancelled", "superseded"].includes(entry.atom.version_state))
-      : deduped;
+      ? entityGrounded.filter((entry) => !["cancelled", "superseded"].includes(entry.atom.version_state))
+      : entityGrounded;
   const warnings = [
-    ...(deduped.length !== validityPruned.length ? ["Stale or cancelled evidence was pruned for a current-answer query."] : []),
+    ...(deduped.length !== entityGrounded.length
+      ? [`Entity grounding pruned ${deduped.length - entityGrounded.length} evidence candidate(s) that did not mention or validate-link to the queried entity.`]
+      : []),
+    ...(entityGrounded.length !== validityPruned.length ? ["Stale or cancelled evidence was pruned for a current-answer query."] : []),
     ...(atoms.length === 0 ? ["No evidence atoms were available for FCF-R3 selection."] : []),
   ];
 
@@ -587,41 +1011,356 @@ const scoreAndPruneCandidates = (
   };
 };
 
+const evidenceTypeRank = (evidenceType: RetrievalEvidenceType): number =>
+  evidenceType === "direct_evidence"
+    ? 5
+    : evidenceType === "corroborating_evidence"
+      ? 4
+      : evidenceType === "indirect_evidence"
+        ? 3
+        : evidenceType === "hypothesis_eei"
+          ? 2
+          : 1;
+
+const candidateRankValue = (candidate: FcfR3SelectedEvidence): number =>
+  (5 - candidate.cluster_priority) * 2 +
+  evidenceTypeRank(candidate.evidence_type) +
+  candidate.score_breakdown.directness +
+  candidate.score_breakdown.analytical_importance +
+  candidate.score;
+
+const isStrongContextCandidate = (candidate: FcfR3SelectedEvidence): boolean =>
+  candidate.entity_grounded &&
+  !["weak_noisy_evidence", "hypothesis_eei"].includes(candidate.evidence_type) &&
+  candidate.atom.kind !== "relation";
+
+const availableStrongContextTypes = (candidates: FcfR3SelectedEvidence[]): FcfR3ContextType[] =>
+  uniqueStrings(
+    candidates
+      .filter(isStrongContextCandidate)
+      .map((candidate) => candidate.context_type)
+      .filter((contextType) => contextType !== "general_context"),
+  ) as FcfR3ContextType[];
+
 const selectBudgetedEvidence = (candidates: FcfR3SelectedEvidence[], queryPlan: FcfR3QueryPlan): FcfR3SelectedEvidence[] => {
   const selected: FcfR3SelectedEvidence[] = [];
   const entityCoverage = new Set<string>();
   let usedChars = 0;
-
-  for (const candidate of candidates) {
-    if (selected.length >= queryPlan.max_evidence_items) break;
+  // Adaptive limit: avoid over-packing when few candidates actually score above threshold
+  const meaningfulCount = candidates.filter((c) => c.score > 0.42 || c.atom.contradiction_ids.length > 0).length;
+  const adaptiveMaxItems = Math.max(3, Math.min(queryPlan.max_evidence_items, meaningfulCount || queryPlan.max_evidence_items));
+  const addSelectedCandidate = (candidate: FcfR3SelectedEvidence, reason: string): boolean => {
+    if (selected.some((entry) => entry.atom.atom_id === candidate.atom.atom_id)) return false;
+    if (selected.length >= adaptiveMaxItems) return false;
     const projectedChars = usedChars + candidate.atom.cost_chars + 180;
-    if (projectedChars > queryPlan.max_context_chars && selected.length > 0) continue;
+    if (projectedChars > queryPlan.max_context_chars && selected.length > 0) return false;
 
+    selected.push({
+      ...candidate,
+      reason_selected: candidate.reason_selected.length ? [...candidate.reason_selected, reason] : [reason],
+      score_breakdown: {
+        ...candidate.score_breakdown,
+        cluster_diversity: selected.some((entry) => entry.cluster_id === candidate.cluster_id) ? 0 : 1,
+      },
+    });
+    candidate.atom.entity_anchors.forEach((entity) => entityCoverage.add(normalizeLookupText(entity)));
+    usedChars = projectedChars;
+    return true;
+  };
+  const orderedCandidates = queryPlan.broad_entity_context
+    ? Array.from(
+        candidates.reduce((groups, candidate) => {
+          groups.set(candidate.cluster_id, [...(groups.get(candidate.cluster_id) || []), candidate]);
+          return groups;
+        }, new Map<string, FcfR3SelectedEvidence[]>()).values(),
+      )
+        .map((group) =>
+          group.sort(
+            (left, right) =>
+              left.cluster_priority - right.cluster_priority ||
+              evidenceTypeRank(right.evidence_type) - evidenceTypeRank(left.evidence_type) ||
+              candidateRankValue(right) - candidateRankValue(left),
+          ),
+        )
+        .sort(
+          (left, right) =>
+            (left[0]?.cluster_priority || 4) - (right[0]?.cluster_priority || 4) ||
+            evidenceTypeRank(right[0]?.evidence_type || "weak_noisy_evidence") - evidenceTypeRank(left[0]?.evidence_type || "weak_noisy_evidence") ||
+            candidateRankValue(right[0]) - candidateRankValue(left[0]),
+        )
+        .flatMap((group) => {
+          const top = group[0];
+          if (!top) return [];
+          if (top.evidence_type === "weak_noisy_evidence") return [];
+          if (top.evidence_type === "hypothesis_eei" && !queryWantsHypotheses(queryPlan.raw_query)) return [];
+          return [top, ...group.slice(1).filter((entry) => !["weak_noisy_evidence", "hypothesis_eei"].includes(entry.evidence_type))];
+        })
+        .filter(Boolean)
+    : candidates;
+
+  for (const candidate of orderedCandidates) {
     const newEntityCount = candidate.atom.entity_anchors.filter((entity) => !entityCoverage.has(normalizeLookupText(entity))).length;
     const sameKindCount = selected.filter((entry) => entry.atom.kind === candidate.atom.kind).length;
     if (selected.length >= 3 && sameKindCount >= 3 && newEntityCount === 0 && !candidate.atom.contradiction_ids.length) {
       continue;
     }
 
-    selected.push({
-      ...candidate,
-      reason_selected: candidate.reason_selected.length ? candidate.reason_selected : ["highest budgeted marginal value"],
+    addSelectedCandidate(candidate, "highest budgeted marginal value");
+  }
+
+  if (queryPlan.broad_entity_context) {
+    const foundContextTypes = new Set(selected.map((entry) => entry.context_type));
+    const missingAvailableTypes = availableStrongContextTypes(candidates).filter((contextType) => !foundContextTypes.has(contextType));
+    missingAvailableTypes.forEach((contextType) => {
+      const coverageCandidate = candidates
+        .filter((candidate) => candidate.context_type === contextType)
+        .filter(isStrongContextCandidate)
+        .filter((candidate) => !selected.some((entry) => entry.atom.atom_id === candidate.atom.atom_id))
+        .sort(
+          (left, right) =>
+            left.cluster_priority - right.cluster_priority ||
+            evidenceTypeRank(right.evidence_type) - evidenceTypeRank(left.evidence_type) ||
+            candidateRankValue(right) - candidateRankValue(left),
+        )[0];
+      if (coverageCandidate) {
+        addSelectedCandidate(coverageCandidate, "second-pass context coverage retrieval");
+      }
     });
-    candidate.atom.entity_anchors.forEach((entity) => entityCoverage.add(normalizeLookupText(entity)));
-    usedChars = projectedChars;
+  }
+
+  if (queryPlan.broad_entity_context && selected.length === 0) {
+    const weakGroundedCandidates = candidates
+      .filter((candidate) => candidate.entity_grounded)
+      .filter((candidate) => ["weak_noisy_evidence", "indirect_evidence"].includes(candidate.evidence_type))
+      .sort((left, right) => right.score - left.score)
+      .slice(0, Math.min(2, queryPlan.max_evidence_items));
+
+    weakGroundedCandidates.forEach((candidate) => {
+      addSelectedCandidate(candidate, "weak grounded fallback candidate");
+    });
+  }
+
+  if (queryPlan.broad_entity_context && queryWantsHypotheses(queryPlan.raw_query)) {
+    const hypothesisCandidate = candidates
+      .filter((candidate) => candidate.evidence_type === "hypothesis_eei")
+      .filter((candidate) => !selected.some((entry) => entry.atom.atom_id === candidate.atom.atom_id))
+      .sort((left, right) => right.score - left.score)[0];
+
+    if (hypothesisCandidate) {
+      const hypothesisEntry = {
+        ...hypothesisCandidate,
+        reason_selected: hypothesisCandidate.reason_selected.length
+          ? [...hypothesisCandidate.reason_selected, "explicit hypothesis/EEI query coverage"]
+          : ["explicit hypothesis/EEI query coverage"],
+        score_breakdown: {
+          ...hypothesisCandidate.score_breakdown,
+          cluster_diversity: selected.some((entry) => entry.cluster_id === hypothesisCandidate.cluster_id) ? 0 : 1,
+        },
+      };
+
+      if (selected.length < queryPlan.max_evidence_items) {
+        addSelectedCandidate(hypothesisEntry, "explicit hypothesis/EEI query coverage");
+      } else {
+        const replaceIndex = selected.reduce(
+          (lowestIndex, entry, index) =>
+            entry.evidence_type !== "direct_evidence" || entry.score < selected[lowestIndex].score ? index : lowestIndex,
+          selected.length - 1,
+        );
+        selected[replaceIndex] = hypothesisEntry;
+      }
+    }
   }
 
   return selected;
 };
 
+const buildFcfEvidenceClusters = (selected: FcfR3SelectedEvidence[]): RetrievalEvidenceCluster[] => {
+  const grouped = new Map<string, FcfR3SelectedEvidence[]>();
+  selected.forEach((entry) => {
+    grouped.set(entry.cluster_id, [...(grouped.get(entry.cluster_id) || []), entry]);
+  });
+
+  return Array.from(grouped.entries())
+    .map(([clusterId, entries]) => {
+      const sorted = [...entries].sort(
+        (left, right) =>
+          left.cluster_priority - right.cluster_priority ||
+          candidateRankValue(right) - candidateRankValue(left),
+      );
+      const hits = sorted.map(toRetrievalHit);
+      const evidenceType =
+        sorted.find((entry) => entry.evidence_type === "direct_evidence")?.evidence_type ||
+        sorted.find((entry) => entry.evidence_type === "corroborating_evidence")?.evidence_type ||
+        sorted[0]?.evidence_type ||
+        "indirect_evidence";
+      const confidence = sorted.length
+        ? round(
+            sorted.reduce(
+              (sum, entry) => sum + entry.score * 0.45 + entry.score_breakdown.directness * 0.3 + entry.score_breakdown.analytical_importance * 0.25,
+              0,
+            ) / sorted.length,
+          )
+        : 0.2;
+      const directCount = sorted.filter((entry) => entry.evidence_type === "direct_evidence").length;
+      const weakCount = sorted.filter((entry) => entry.evidence_type === "weak_noisy_evidence").length;
+      const label = sorted[0]?.cluster_label || "Evidence cluster";
+      const citedEvidenceIds = uniqueStrings(sorted.map((entry) => entry.atom.evidence_id || entry.atom.citation_id).filter(Boolean));
+      const status = clusterStatusForEntry(sorted[0]);
+      const confidenceLabel = clusterConfidenceLabel(
+        {
+          cluster_id: clusterId,
+          label,
+          role: "",
+          evidence_type: evidenceType,
+          hits,
+          cited_evidence_ids: citedEvidenceIds,
+          related_entities: uniqueStrings(sorted.flatMap((entry) => entry.atom.entity_anchors)),
+          interpretation: "",
+          confidence,
+          direct_evidence_count: directCount,
+          weak_evidence_count: weakCount,
+        },
+        status,
+      );
+
+      return {
+        cluster_id: clusterId,
+        label,
+        role:
+          evidenceType === "direct_evidence"
+            ? "Direct support for an analytical claim"
+            : evidenceType === "corroborating_evidence"
+              ? "Corroborates or strengthens a direct signal"
+              : evidenceType === "hypothesis_eei"
+                ? "Hypothesis or collection requirement, not a fact"
+                : evidenceType === "weak_noisy_evidence"
+                  ? "Weak/noisy context kept behind stronger evidence"
+                  : "Indirect background context",
+        evidence_type: evidenceType,
+        status,
+        confidence_label: confidenceLabel,
+        hits,
+        cited_evidence_ids: citedEvidenceIds,
+        related_entities: uniqueStrings(sorted.flatMap((entry) => entry.atom.entity_anchors)),
+        interpretation: sorted[0]?.atom.text
+          ? `${label}: ${truncate(sorted[0].atom.text, 320)}`
+          : `${label}: no interpretable evidence text was retained.`,
+        confidence,
+        direct_evidence_count: directCount,
+        weak_evidence_count: weakCount,
+      };
+    })
+    .filter((cluster) => cluster.cited_evidence_ids.length > 0)
+    .sort(
+      (left, right) =>
+        Math.min(...left.hits.map((hit) => {
+          const selectedEntry = selected.find((entry) => (entry.atom.evidence_id || entry.atom.citation_id) === (hit.evidence_id || hit.item_id));
+          return selectedEntry?.cluster_priority || 4;
+        })) -
+          Math.min(...right.hits.map((hit) => {
+            const selectedEntry = selected.find((entry) => (entry.atom.evidence_id || entry.atom.citation_id) === (hit.evidence_id || hit.item_id));
+            return selectedEntry?.cluster_priority || 4;
+          })) ||
+        right.confidence - left.confidence ||
+        right.direct_evidence_count - left.direct_evidence_count ||
+        left.weak_evidence_count - right.weak_evidence_count,
+    );
+};
+
 const deriveAnswerStatus = (selected: FcfR3SelectedEvidence[], queryPlan: FcfR3QueryPlan): FcfR3AnswerStatus => {
   if (!selected.length) return "no-evidence";
+  const sourceDocIds = uniqueStrings(selected.map((entry) => entry.atom.source_doc_id).filter(Boolean));
+  const sourceConsistent =
+    queryPlan.allow_cross_source ||
+    sourceDocIds.length <= 1 ||
+    (queryPlan.allowed_source_doc_ids.length > 0 &&
+      sourceDocIds.every((sourceDocId) => sourceMatchesAllowedScope(sourceDocId, queryPlan.allowed_source_doc_ids)));
+  if (!sourceConsistent) return "insufficient-evidence";
+  const traceableCount = selected.filter((entry) => isTraceableEvidence(entry)).length;
+  const traceabilityRate = selected.length ? traceableCount / selected.length : 0;
+  if (traceabilityRate < 0.8) return "insufficient-evidence";
+  if (queryPlan.broad_entity_context) {
+    const strongGroundedEvidence = selected.filter(
+      (entry) =>
+        entry.entity_grounded &&
+        !["weak_noisy_evidence", "hypothesis_eei"].includes(entry.evidence_type) &&
+        entry.atom.kind !== "relation",
+    );
+    if (!strongGroundedEvidence.length) return "insufficient-evidence";
+  }
   if (selected.some((entry) => entry.atom.contradiction_ids.length || entry.atom.version_state === "contradicted")) {
     return queryPlan.task_family === "risk" || queryPlan.mode === "contradiction" ? "conflict-detected" : "human-review-required";
   }
   if (selected.every((entry) => ["historical", "superseded", "cancelled"].includes(entry.atom.version_state))) return "historical-only";
   if (selected.some((entry) => entry.atom.version_state === "current" || entry.score >= 0.45)) return "current-supported";
   return "insufficient-evidence";
+};
+
+const isTraceableEvidence = (entry: FcfR3SelectedEvidence): boolean =>
+  Boolean(entry.atom.evidence_id || entry.atom.source_text_unit_id || ["retrieval_hit", "version_atom", "statement", "insight", "timeline"].includes(entry.atom.kind));
+
+const validateSourceConsistency = (selected: FcfR3SelectedEvidence[], queryPlan: FcfR3QueryPlan) => {
+  const sourceDocIds = uniqueStrings(selected.map((entry) => entry.atom.source_doc_id).filter(Boolean));
+  const sourceConsistent =
+    queryPlan.allow_cross_source ||
+    sourceDocIds.length <= 1 ||
+    (queryPlan.allowed_source_doc_ids.length > 0 &&
+      sourceDocIds.every((sourceDocId) => sourceMatchesAllowedScope(sourceDocId, queryPlan.allowed_source_doc_ids)));
+  const traceableCount = selected.filter(isTraceableEvidence).length;
+  const traceabilityRate = selected.length ? round(traceableCount / selected.length) : 0;
+
+  return {
+    sourceDocIds,
+    sourceConsistent,
+    traceabilityRate,
+  };
+};
+
+const validateContextCoverage = (selected: FcfR3SelectedEvidence[], candidates: FcfR3SelectedEvidence[], queryPlan: FcfR3QueryPlan) => {
+  const foundContextTypes = uniqueStrings(
+    selected
+      .filter(isStrongContextCandidate)
+      .map((entry) => entry.context_type)
+      .filter((contextType) => contextType !== "general_context"),
+  ) as FcfR3ContextType[];
+  const availableContextTypes = availableStrongContextTypes(candidates);
+  const missingContextTypes = queryPlan.broad_entity_context
+    ? availableContextTypes.filter((contextType) => !foundContextTypes.includes(contextType))
+    : [];
+  const coverageChecklist = Object.fromEntries(
+    EXPECTED_CONTEXT_TYPES.map((contextType) => [
+      contextType,
+      foundContextTypes.includes(contextType)
+        ? "found"
+        : availableContextTypes.includes(contextType)
+          ? "partial"
+          : "not_found",
+    ]),
+  ) as Record<string, "found" | "not_found" | "partial">;
+  const requiredCoverageCount = queryPlan.wants_exhaustive_context
+    ? 6
+    : Math.min(4, availableContextTypes.length);
+  const aliasGroundedCount = selected.filter((entry) => entry.entity_grounded).length;
+  const contextCoverageScore = availableContextTypes.length
+    ? round(foundContextTypes.length / availableContextTypes.length)
+    : selected.length
+      ? 0.25
+      : 0;
+  const coverageComplete =
+    queryPlan.broad_entity_context &&
+    missingContextTypes.length === 0 &&
+    foundContextTypes.length >= requiredCoverageCount &&
+    aliasGroundedCount === selected.length;
+  const secondPassRetrieval = selected.some((entry) => entry.reason_selected.includes("second-pass context coverage retrieval"));
+
+  return {
+    foundContextTypes,
+    missingContextTypes,
+    contextCoverageScore,
+    coverageComplete,
+    secondPassRetrieval,
+    coverageChecklist,
+  };
 };
 
 const toRetrievalHit = (entry: FcfR3SelectedEvidence): RetrievalEvidenceHit => ({
@@ -644,6 +1383,11 @@ const toRetrievalHit = (entry: FcfR3SelectedEvidence): RetrievalEvidenceHit => (
   score: entry.score,
   matched_terms: [],
   explanation: entry.reason_selected,
+  evidence_type: entry.evidence_type,
+  cluster_id: entry.cluster_id,
+  cluster_label: entry.cluster_label,
+  directness_score: entry.score_breakdown.directness,
+  analytical_importance: entry.score_breakdown.analytical_importance,
   score_breakdown: {
     lexical_score: entry.score_breakdown.lexical_entity_match,
     structural_score: round((entry.score_breakdown.version_validity + entry.score_breakdown.source_trust) / 2),
@@ -653,11 +1397,23 @@ const toRetrievalHit = (entry: FcfR3SelectedEvidence): RetrievalEvidenceHit => (
     temporal_score: entry.atom.time_anchors.length ? 0.1 : 0,
     confidence_score: entry.atom.confidence,
     validity_score: entry.score_breakdown.version_validity,
+    entity_relevance_score: entry.score_breakdown.entity_relevance,
+    analytical_importance_score: entry.score_breakdown.analytical_importance,
+    directness_score: entry.score_breakdown.directness,
+    cluster_diversity_score: entry.score_breakdown.cluster_diversity,
+    duplicate_penalty: entry.score_breakdown.duplicate_penalty,
+    boilerplate_penalty: entry.score_breakdown.boilerplate_penalty,
+    isolated_token_penalty: entry.score_breakdown.isolated_token_penalty,
     fused_score: entry.score,
   },
 });
 
-const buildRetrievalArtifacts = (queryPlan: FcfR3QueryPlan, selected: FcfR3SelectedEvidence[], warnings: string[]): RetrievalArtifacts => {
+const buildRetrievalArtifacts = (
+  queryPlan: FcfR3QueryPlan,
+  selected: FcfR3SelectedEvidence[],
+  evidenceClusters: RetrievalEvidenceCluster[],
+  warnings: string[],
+): RetrievalArtifacts => {
   const hits = selected.map(toRetrievalHit);
   const kind: RetrievalBundleKind =
     queryPlan.mode === "relationship"
@@ -678,12 +1434,16 @@ const buildRetrievalArtifacts = (queryPlan: FcfR3QueryPlan, selected: FcfR3Selec
     bundle_count: 1,
     diagnostics: {
       semantic_enabled: false,
+      broad_analytical_enabled: queryPlan.broad_entity_context,
+      expanded_query_terms: queryPlan.expanded_terms,
       version_validity_enabled: hits.some((hit) => Boolean(hit.version_state)),
       fusion_strategy: [
         "query compiler",
+        "entity expansion",
         "hybrid lexical/entity retrieval",
+        "analytical reranking",
         "version validity pruning",
-        "budgeted selector",
+        "cluster coverage selector",
         "citation verification handoff",
       ],
     },
@@ -701,6 +1461,16 @@ const buildRetrievalArtifacts = (queryPlan: FcfR3QueryPlan, selected: FcfR3Selec
         version_state: hits.some((hit) => hit.version_state === "current") ? "current" : hits[0]?.version_state,
         validity_score: hits.length ? round(hits.reduce((sum, hit) => sum + (hit.validity_score || 0.5), 0) / hits.length) : undefined,
         confidence: hits.length ? round(hits.reduce((sum, hit) => sum + hit.confidence, 0) / hits.length) : 0,
+        evidence_clusters: evidenceClusters,
+        analytical_synthesis: evidenceClusters.length
+          ? `The answer should be synthesized from ${evidenceClusters.length} evidence cluster(s), led by ${evidenceClusters
+              .slice(0, 3)
+              .map((cluster) => cluster.label)
+              .join("; ")}.`
+          : "No evidence cluster survived FCF-R3 selection.",
+        bottom_line: evidenceClusters.some((cluster) => cluster.evidence_type === "direct_evidence")
+          ? "Strongest direct clusters should lead the answer; weak or speculative evidence is only supporting context."
+          : "No direct evidence cluster is available; mark conclusions as limited or hypotheses.",
         warnings,
       },
     },
@@ -710,10 +1480,57 @@ const buildRetrievalArtifacts = (queryPlan: FcfR3QueryPlan, selected: FcfR3Selec
 const materializeContext = (
   queryPlan: FcfR3QueryPlan,
   selected: FcfR3SelectedEvidence[],
+  evidenceClusters: RetrievalEvidenceCluster[],
   status: FcfR3AnswerStatus,
   warnings: string[],
   maxSnippetChars: number,
+  contextProfile: "compact" | "verbose" = "compact",
 ): string => {
+  if (contextProfile === "compact") {
+    const compactSnippetChars = Math.min(maxSnippetChars, queryPlan.broad_entity_context ? 150 : 220);
+    const shortEvidenceType = (evidenceType: RetrievalEvidenceType): string => {
+      if (evidenceType === "direct_evidence") return "direct";
+      if (evidenceType === "corroborating_evidence") return "corrob";
+      if (evidenceType === "indirect_evidence") return "indirect";
+      if (evidenceType === "hypothesis_eei") return "eei";
+      return "weak";
+    };
+    const shortStatus = (status?: FcfR3ClusterStatus): string => {
+      if (status === "confirmed_direct") return "confirmed";
+      if (status === "indirect_indicator") return "indicator";
+      if (status === "hypothesis_eei") return "eei";
+      if (status === "corroborated") return "corroborated";
+      return "weak";
+    };
+    const statusForEntry = (entry: FcfR3SelectedEvidence): string =>
+      evidenceClusters.find((cluster) =>
+        cluster.hits.some((hit) => (entry.atom.evidence_id || entry.atom.citation_id) === (hit.evidence_id || hit.item_id)),
+      )?.status || "weak_noisy";
+    const evidenceLines = selected.map((entry) => {
+      const id = entry.atom.evidence_id || entry.atom.citation_id;
+      return `[${id}] ${entry.context_type};${shortStatus(statusForEntry(entry) as FcfR3ClusterStatus)}/${shortEvidenceType(entry.evidence_type)};p${entry.cluster_priority}: ${truncate(entry.atom.text.replace(/\s+/g, " "), compactSnippetChars)}`;
+    });
+    const clusterIndex = evidenceClusters
+      .map((cluster, index) => {
+        return `C${index + 1}:${shortStatus(cluster.status)}/${cluster.confidence_label || "low"}/${shortEvidenceType(cluster.evidence_type)}`;
+      })
+      .join("; ");
+    const foundTypes = uniqueStrings(selected.map((entry) => entry.context_type)).slice(0, 12);
+    const compactContext = [
+      "FCF-R3 READ PATH",
+      `route=${queryPlan.mode}; status=${status}; selected=${selected.length}/${queryPlan.max_evidence_items}`,
+      foundTypes.length ? `coverage=${foundTypes.join(",")}` : "",
+      clusterIndex ? `CLUSTERS ${clusterIndex}` : "CLUSTERS none",
+      "EVIDENCE",
+      evidenceLines.length ? evidenceLines.join("\n") : "No evidence selected; abstain.",
+      "RULES: Synthesize first; cite ids; direct>indirect>EEI; indirect=possible; EEI=validation gap.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    return truncate(compactContext, queryPlan.max_context_chars);
+  }
+
   const evidenceLines = selected.map((entry, index) => {
     const id = entry.atom.evidence_id || entry.atom.citation_id;
     const state = entry.atom.version_state ? `state=${entry.atom.version_state}` : "state=unknown";
@@ -721,27 +1538,44 @@ const materializeContext = (
     const score = `score=${Math.round(entry.score * 100)}%`;
     return [
       `[${id}] ${entry.atom.title}`,
-      `meta: rank=${index + 1}; ${state}; ${trust}; ${score}; reasons=${entry.reason_selected.join(", ") || "budgeted"}`,
+      `meta: rank=${index + 1}; cluster=${entry.cluster_label}; evidence_type=${entry.evidence_type}; directness=${Math.round(entry.score_breakdown.directness * 100)}%; analytical_importance=${Math.round(entry.score_breakdown.analytical_importance * 100)}%; ${state}; ${trust}; ${score}; reasons=${entry.reason_selected.join(", ") || "budgeted"}`,
       `text: ${truncate(entry.atom.text, maxSnippetChars)}`,
       entry.atom.entity_anchors.length ? `entities: ${entry.atom.entity_anchors.slice(0, 8).join(", ")}` : "",
     ]
       .filter(Boolean)
       .join("\n");
   });
+  const clusterLines = evidenceClusters.map((cluster, index) =>
+    [
+      `${index + 1}. ${cluster.label}`,
+      `role=${cluster.role}; type=${cluster.evidence_type}; status=${cluster.status || "weak_noisy"}; confidence=${cluster.confidence_label || "low"} (${Math.round(cluster.confidence * 100)}%); direct=${cluster.direct_evidence_count}; weak=${cluster.weak_evidence_count}`,
+      `interpretation=${cluster.interpretation}`,
+      cluster.cited_evidence_ids.length ? `citations=${cluster.cited_evidence_ids.join(", ")}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  );
 
   const context = [
     "FCF-R3 READ PATH",
     `route: mode=${queryPlan.mode}; task_family=${queryPlan.task_family}; status=${status}`,
     `budget: selected=${selected.length}/${queryPlan.max_evidence_items}; max_context_chars=${queryPlan.max_context_chars}`,
     queryPlan.entities.length ? `compiled_entities: ${queryPlan.entities.join(", ")}` : "",
+    queryPlan.expanded_terms.length ? `expanded_terms: ${queryPlan.expanded_terms.slice(0, 24).join(", ")}` : "",
     queryPlan.dates.length ? `compiled_dates: ${queryPlan.dates.join(", ")}` : "",
     warnings.length ? `warnings:\n- ${warnings.join("\n- ")}` : "",
+    queryPlan.broad_entity_context ? "intent: broad analytical entity-context question; synthesize meaning from clusters, do not list raw hits." : "",
+    "",
+    "EVIDENCE CLUSTERS",
+    clusterLines.length ? clusterLines.join("\n\n") : "No evidence clusters selected.",
     "",
     "SELECTED EXACT EVIDENCE",
     evidenceLines.length ? evidenceLines.join("\n\n") : "No evidence selected. The model must abstain or ask for more data.",
     "",
     "ANSWER RULES",
     "Use only selected evidence ids in brackets. If the selected evidence is insufficient, say so explicitly.",
+    "For broad entity-context questions, answer with: executive synthesis, evidence clusters, interpretation per cluster, confidence level, citations, bottom-line assessment.",
+    "Separate document facts from evidence-backed conclusions and mark hypotheses/EEIs explicitly.",
   ]
     .filter(Boolean)
     .join("\n");
@@ -750,22 +1584,16 @@ const materializeContext = (
 };
 
 const buildKnowledgeSnapshot = (queryPlan: FcfR3QueryPlan, audit: FcfR3AuditSummary): string =>
-  JSON.stringify(
-    {
-      architecture: "FCF-R3",
-      query_plan: {
-        mode: queryPlan.mode,
-        task_family: queryPlan.task_family,
-        entities: queryPlan.entities,
-        dates: queryPlan.dates,
-        wants_current: queryPlan.wants_current,
-        citation_required: queryPlan.citation_required,
-      },
-      audit,
-    },
-    null,
-    2,
-  );
+  [
+    "FCF-R3 SNAPSHOT",
+    `route=${queryPlan.mode}; family=${queryPlan.task_family}; status=${audit.answer_status}; selected=${audit.selected_count}/${audit.candidate_count}; clusters=${audit.cluster_count || 0}; tokens~${audit.estimated_input_tokens}`,
+    queryPlan.entities.length ? `entities=${queryPlan.entities.slice(0, 8).join(", ")}` : "",
+    audit.found_context_types?.length ? `found=${audit.found_context_types.map(contextTypeLabel).join(", ")}` : "",
+    audit.missing_context_types?.length ? `missing=${audit.missing_context_types.map(contextTypeLabel).join(", ")}` : "",
+    audit.warnings.length ? `warnings=${audit.warnings.slice(0, 2).join(" | ")}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 
 export const buildFcfR3ReadPath = (
   query: string,
@@ -774,27 +1602,60 @@ export const buildFcfR3ReadPath = (
 ): FcfR3ReadPathRun => {
   const queryPlan = compileFcfR3Query(query, pkg, options);
   const atoms = buildFcfR3EvidenceAtoms(pkg);
-  const { candidates, prunedCount, warnings: pruneWarnings } = scoreAndPruneCandidates(atoms, queryPlan);
+  const scopedAtoms = filterAtomsBySourceScope(atoms, queryPlan);
+  const { candidates, prunedCount, warnings: pruneWarnings } = scoreAndPruneCandidates(scopedAtoms.atoms, queryPlan);
   const selected = selectBudgetedEvidence(candidates, queryPlan);
+  const evidenceClusters = buildFcfEvidenceClusters(selected);
+  const sourceValidation = validateSourceConsistency(selected, queryPlan);
   const answerStatus = deriveAnswerStatus(selected, queryPlan);
+  const coverage = validateContextCoverage(selected, candidates, queryPlan);
   const warnings = uniqueStrings([
+    ...scopedAtoms.warnings,
     ...pruneWarnings,
+    ...(!sourceValidation.sourceConsistent ? ["Selected evidence spans unrelated source documents; synthesis was blocked by source consistency validation."] : []),
+    ...(sourceValidation.traceabilityRate < (options.minTraceabilityRate ?? 0.8)
+      ? [`Traceability below safe threshold (${Math.round(sourceValidation.traceabilityRate * 100)}%); answer must remain partial or insufficient.`]
+      : []),
+    ...(queryPlan.broad_entity_context && coverage.secondPassRetrieval ? ["Second-pass retrieval added evidence for missing entity-context types."] : []),
+    ...(queryPlan.broad_entity_context && !coverage.coverageComplete && coverage.missingContextTypes.length
+      ? [`Entity-context coverage is partial; missing selected context types: ${coverage.missingContextTypes.map(contextTypeLabel).join(", ")}.`]
+      : []),
     ...(answerStatus === "no-evidence" ? ["No relevant evidence survived FCF-R3 selection."] : []),
     ...(answerStatus === "historical-only" ? ["Only stale or historical evidence supports this answer."] : []),
     ...(answerStatus === "conflict-detected" || answerStatus === "human-review-required"
       ? ["Conflict evidence is present; answer should surface uncertainty."]
       : []),
   ]);
-  const maxSnippetChars = options.maxSnippetChars ?? 420;
-  const materializedContext = materializeContext(queryPlan, selected, answerStatus, warnings, maxSnippetChars);
+  const maxSnippetChars = options.maxSnippetChars ?? (queryPlan.broad_entity_context ? 240 : 320);
+  const materializedContext = materializeContext(
+    queryPlan,
+    selected,
+    evidenceClusters,
+    answerStatus,
+    warnings,
+    maxSnippetChars,
+    options.contextProfile || "compact",
+  );
   const audit: FcfR3AuditSummary = {
     answer_status: answerStatus,
     candidate_count: candidates.length,
-    pruned_count: prunedCount,
+    pruned_count: prunedCount + scopedAtoms.prunedCount,
     selected_count: selected.length,
+    cluster_count: evidenceClusters.length,
+    direct_evidence_count: evidenceClusters.reduce((sum, cluster) => sum + cluster.direct_evidence_count, 0),
+    weak_evidence_count: evidenceClusters.reduce((sum, cluster) => sum + cluster.weak_evidence_count, 0),
     context_chars: materializedContext.length,
     estimated_input_tokens: Math.ceil(materializedContext.length / 4),
     selected_evidence_ids: selected.map((entry) => entry.atom.evidence_id || entry.atom.citation_id),
+    found_context_types: coverage.foundContextTypes,
+    missing_context_types: coverage.missingContextTypes,
+    context_coverage_score: coverage.contextCoverageScore,
+    coverage_complete: coverage.coverageComplete,
+    second_pass_retrieval: coverage.secondPassRetrieval,
+    coverage_checklist: coverage.coverageChecklist,
+    source_doc_ids: sourceValidation.sourceDocIds,
+    source_consistent: sourceValidation.sourceConsistent,
+    traceability_rate: sourceValidation.traceabilityRate,
     route_mode: queryPlan.mode,
     task_family: queryPlan.task_family,
     warnings,
@@ -803,11 +1664,80 @@ export const buildFcfR3ReadPath = (
   return {
     query_plan: queryPlan,
     selected,
+    evidence_clusters: evidenceClusters,
     materialized_context: materializedContext,
     knowledge_snapshot: buildKnowledgeSnapshot(queryPlan, audit),
-    retrieval_artifacts: buildRetrievalArtifacts(queryPlan, selected, warnings),
+    retrieval_artifacts: buildRetrievalArtifacts(queryPlan, selected, evidenceClusters, warnings),
     audit,
   };
+};
+
+const citationsForCluster = (cluster: RetrievalEvidenceCluster, limit = 3): string =>
+  cluster.cited_evidence_ids.slice(0, limit).map((id) => `[${id}]`).join(" ");
+
+const deriveClusterMeaning = (clusters: RetrievalEvidenceCluster[], isHebrew: boolean): string => {
+  const labels = clusters.map((cluster) => normalizeLookupText(cluster.label));
+  const hasFinance = labels.some((label) => /finance|fund|payment|cedar|מימון|כסף|תשלום/i.test(label));
+  const hasMeeting = labels.some((label) => /maya|meeting|associated|ashdod|פגישה|אשדוד/i.test(label));
+  const hasComms = labels.some((label) => /relay|communication|comms|channel|תקשורת|ערוץ/i.test(label));
+  const hasCommand = labels.some((label) => /strategic command|operational control|command|control|פיקוד|שליטה/i.test(label));
+  const hasOperators = labels.some((label) => /human operators|operator|mit|מפעיל|סוכן/i.test(label));
+  const hasTechnology = labels.some((label) => /technology|equipment|vendor|ציוד|טכנולוג/i.test(label));
+  const hasGeography = labels.some((label) => /proxy|geography|istanbul|ankara|איסטנבול|אנקרה|גאוגר/i.test(label));
+  const hasClaims = labels.some((label) => /claim|assessment|טענה|הערכה/i.test(label));
+  const roles = [
+    hasCommand ? (isHebrew ? "ציר פיקוד/שליטה" : "command/control axis") : "",
+    hasOperators ? (isHebrew ? "קשר למפעילים אנושיים" : "human-operator link") : "",
+    hasFinance ? (isHebrew ? "צומת מימון" : "finance node") : "",
+    hasMeeting ? (isHebrew ? "צומת פעילות/מפגשים" : "operations or meeting node") : "",
+    hasComms ? (isHebrew ? "צומת תקשורת/תיאום" : "communications coordination node") : "",
+    hasTechnology ? (isHebrew ? "ציר טכנולוגיה/ציוד" : "technology/equipment axis") : "",
+    hasGeography ? (isHebrew ? "מרחב פרוקסי/גאוגרפיה" : "proxy/geography context") : "",
+    hasClaims ? (isHebrew ? "מושא הערכה אנליטית" : "subject of analytical assessment") : "",
+  ].filter(Boolean);
+
+  if (!roles.length) {
+    return isHebrew
+      ? "המשמעות המרכזית היא נוכחות חוזרת בכמה אשכולות ראיה, אך ללא תפקיד תפעולי מובחן מספיק."
+      : "The main meaning is repeated presence across evidence clusters, but without a sufficiently distinct operational role.";
+  }
+
+  return isHebrew
+    ? `המשמעות המרכזית: הישות מתפקדת כ${roles.join(", ")} בתוך התיק.`
+    : `Core meaning: the entity functions as a ${roles.join(", ")} in the case.`;
+};
+
+const evidenceLanguagePrefix = (entry: FcfR3SelectedEvidence, isHebrew: boolean): string => {
+  if (entry.evidence_polarity !== "positive_link") {
+    return isHebrew
+      ? "מגבלת מעורבות / גורם חלופי:"
+      : "Boundary of involvement / alternative actor:";
+  }
+  if (entry.evidence_type === "direct_evidence") return isHebrew ? "המסמך מציין / מאשר:" : "The document states / supports:";
+  if (entry.evidence_type === "corroborating_evidence") return isHebrew ? "הדבר מחזק את ההערכה:" : "Corroborates the assessment:";
+  if (entry.evidence_type === "indirect_evidence") return isHebrew ? "מהווה אינדיקציה אפשרית:" : "Possible indication:";
+  if (entry.evidence_type === "hypothesis_eei") return isHebrew ? "זו שאלת בירור / נדרש אימות:" : "Validation gap / EEI:";
+  return isHebrew ? "ראיה חלשה, לא בסיס למסקנה:" : "Weak indicator, not a basis for a conclusion:";
+};
+
+const selectedForCluster = (cluster: RetrievalEvidenceCluster, selected: FcfR3SelectedEvidence[]): FcfR3SelectedEvidence | undefined =>
+  selected.find((entry) => cluster.hits.some((hit) => (entry.atom.evidence_id || entry.atom.citation_id) === (hit.evidence_id || hit.item_id)));
+
+const clusterStatusForEntry = (entry: FcfR3SelectedEvidence | undefined): FcfR3ClusterStatus => {
+  if (!entry) return "weak_noisy";
+  if (entry.evidence_type === "hypothesis_eei" || isHypothesisText(entry.atom.text)) return "hypothesis_eei";
+  if (entry.evidence_type === "weak_noisy_evidence") return "weak_noisy";
+  if (isIndirectIndicatorText(entry.atom.text) && !isDirectFinanceEvidenceText(entry.atom.text)) return "indirect_indicator";
+  if (entry.evidence_type === "corroborating_evidence") return "corroborated";
+  if (entry.evidence_type === "indirect_evidence") return "indirect_indicator";
+  return "confirmed_direct";
+};
+
+const clusterConfidenceLabel = (cluster: RetrievalEvidenceCluster, status: FcfR3ClusterStatus): "high" | "medium" | "low" => {
+  if (status === "weak_noisy") return "low";
+  if (status === "hypothesis_eei") return cluster.confidence >= 0.66 ? "medium" : "low";
+  if (status === "indirect_indicator") return cluster.confidence >= 0.72 ? "medium" : "low";
+  return cluster.confidence >= 0.72 ? "high" : cluster.confidence >= 0.52 ? "medium" : "low";
 };
 
 export const buildFcfR3DeterministicAnswer = (
@@ -850,6 +1780,155 @@ export const buildFcfR3DeterministicAnswer = (
   }
 
   const warningLines = run.audit.warnings.slice(0, 3).map((warning) => `- ${warning}`);
+  if (run.query_plan.broad_entity_context) {
+    const clusters = run.evidence_clusters.length ? run.evidence_clusters : run.retrieval_artifacts.bundles.fcf_r3_selected?.evidence_clusters || [];
+    const limitingClusters = clusters.filter((cluster) => {
+      const entry = selectedForCluster(cluster, run.selected);
+      return entry?.evidence_polarity !== "positive_link" || entry?.context_type === "limiting_evidence";
+    });
+    const strongClusters =
+      run.audit.answer_status === "insufficient-evidence"
+        ? []
+        : clusters.filter((cluster) => {
+            const entry = selectedForCluster(cluster, run.selected);
+            return !["weak_noisy_evidence", "hypothesis_eei"].includes(cluster.evidence_type) && entry?.evidence_polarity === "positive_link";
+          });
+    const hypothesisClusters = clusters.filter((cluster) => cluster.evidence_type === "hypothesis_eei");
+    const weakClusters = clusters.filter((cluster) => cluster.evidence_type === "weak_noisy_evidence");
+    const confidenceLevel = run.audit.direct_evidence_count
+      ? isHebrew
+        ? "בינונית-גבוהה"
+        : "medium-high"
+      : isHebrew
+        ? "נמוכה-בינונית"
+        : "low-medium";
+    const leadCitations = strongClusters.slice(0, 3).flatMap((cluster) => cluster.cited_evidence_ids).slice(0, 4).map((id) => `[${id}]`).join(" ");
+    const meaning = deriveClusterMeaning(strongClusters, isHebrew);
+    const displayClusterLimit = run.query_plan.wants_exhaustive_context ? 12 : 5;
+    const displayEvidenceLimit = run.query_plan.wants_exhaustive_context ? 12 : 6;
+    const clusterLines = (strongClusters.length ? strongClusters : clusters.filter((cluster) => cluster.evidence_type !== "weak_noisy_evidence")).slice(0, displayClusterLimit).map((cluster, index) => {
+      const citations = citationsForCluster(cluster);
+      const selectedEntry = selectedForCluster(cluster, run.selected);
+      const prefix = selectedEntry ? evidenceLanguagePrefix(selectedEntry, isHebrew) : "";
+      const statusLine = `status=${cluster.status || "weak_noisy"}; confidence=${cluster.confidence_label || "low"}`;
+      return isHebrew
+        ? `${index + 1}. ${cluster.label} (${statusLine}): ${prefix} ${cluster.interpretation} ${citations}`.trim()
+        : `${index + 1}. ${cluster.label} (${statusLine}): ${prefix} ${cluster.interpretation} ${citations}`.trim();
+    });
+    const supportingLines = run.selected
+      .filter((entry) => !["weak_noisy_evidence", "hypothesis_eei"].includes(entry.evidence_type))
+      .slice(0, displayEvidenceLimit)
+      .map((entry) => {
+        const id = entry.atom.evidence_id || entry.atom.citation_id;
+        return `- ${evidenceLanguagePrefix(entry, isHebrew)} ${truncate(entry.atom.text, 360)} [${id}]`;
+      });
+    const limitingLines = limitingClusters.slice(0, 4).map((cluster) => {
+      const entry = selectedForCluster(cluster, run.selected);
+      const explanation = isHebrew
+        ? "זה אינו מוכיח מעורבות ישירה של הישות, אלא מחדד את גבולות המעורבות שלה."
+        : "This does not prove direct involvement by the queried entity; it clarifies the boundary of involvement.";
+      return `- ${entry ? evidenceLanguagePrefix(entry, isHebrew) : ""} ${cluster.interpretation} ${citationsForCluster(cluster)} ${explanation}`.trim();
+    });
+    const hypothesisLines = hypothesisClusters.slice(0, 3).map((cluster) =>
+      isHebrew
+        ? `- status=${cluster.status || "hypothesis_eei"}; confidence=${cluster.confidence_label || "low"}: ${cluster.interpretation} ${citationsForCluster(cluster)}`.trim()
+        : `- status=${cluster.status || "hypothesis_eei"}; confidence=${cluster.confidence_label || "low"}: ${cluster.interpretation} ${citationsForCluster(cluster)}`.trim(),
+    );
+    const weakNote = weakClusters.length
+      ? isHebrew
+        ? `ראיות חלשות/מקוטעות נשמרו כהסתייגות בלבד: ${weakClusters.map((cluster) => cluster.label).slice(0, 2).join("; ")}.`
+        : `Weak or fragmented evidence is retained only as caveat context: ${weakClusters.map((cluster) => cluster.label).slice(0, 2).join("; ")}.`
+      : "";
+    const insufficientNotice = run.audit.answer_status === "insufficient-evidence"
+      ? isHebrew
+        ? "לא נמצאו מספיק ראיות ישירות שמזכירות את הישות או alias שלה בפועל. הפריטים שלהלן הם מועמדים חלשים/חלקיים בלבד ולא בסיס למסקנה מאושרת."
+        : "Not enough direct evidence mentions the queried entity or a validated alias. The items below are weak or partial candidates, not a basis for a confirmed synthesis."
+      : "";
+    const coverageLine = isHebrew
+      ? run.audit.coverage_complete
+        ? `בדיקת הכיסוי מצאה כיסוי רחב של ההקשרים שנמצאו בראיות שנבחרו: ${(run.audit.found_context_types || []).map(contextTypeLabel).join(", ")}.`
+        : `נמצאו ההקשרים המרכזיים הבאים על בסיס הראיות שנבחרו: ${(run.audit.found_context_types || []).map(contextTypeLabel).join(", ") || "לא זוהו הקשרים חזקים"}. הכיסוי חלקי ולכן אין להציג זאת כ"כל ההקשרים".`
+      : run.audit.coverage_complete
+        ? `Coverage validation found broad coverage of selected evidence contexts: ${(run.audit.found_context_types || []).map(contextTypeLabel).join(", ")}.`
+        : `The following central contexts were found from the selected evidence: ${(run.audit.found_context_types || []).map(contextTypeLabel).join(", ") || "no strong context types"}. Coverage is partial, so this should not be read as all contexts.`;
+    const notFoundCoverage = Object.entries(run.audit.coverage_checklist || {})
+      .filter(([, status]) => status === "not_found")
+      .map(([contextType]) => contextTypeLabel(contextType as FcfR3ContextType));
+    const coverageChecklistLine = notFoundCoverage.length
+      ? isHebrew
+        ? `בדיקת כיסוי: לא נמצאה ראיה חזקה עבור ${notFoundCoverage.slice(0, 6).join(", ")}.`
+        : `Coverage checklist: no strong evidence was found for ${notFoundCoverage.slice(0, 6).join(", ")}.`
+      : "";
+
+    if (isHebrew) {
+      return [
+        `סטטוס FCF-R3: ${run.audit.answer_status}`,
+        "",
+        "תקציר מנהלים:",
+        insufficientNotice,
+        coverageLine,
+        coverageChecklistLine,
+        strongClusters.length
+          ? `${meaning} הקביעה נתמכת באשכולות ישירים ומגוונים, ובראשם ${strongClusters[0].label}. ${leadCitations}`
+          : "לא נמצאה שכבת ראיות חזקה מספיק למסקנה נחרצת; יש להתייחס לפלט כהכוונת המשך חקירה.",
+        "",
+        "אשכולות ראיה ופירוש:",
+        clusterLines.join("\n"),
+        "",
+        "רמת ביטחון:",
+        `${confidenceLevel}. נבחרו ${run.audit.selected_count} ראיות מתוך ${run.audit.candidate_count} מועמדים, ב-${run.audit.cluster_count || 0} אשכולות.`,
+        "",
+        "ציטוטים:",
+        supportingLines.join("\n"),
+        limitingLines.length ? `\nגבולות מעורבות / גורם חלופי:\n${limitingLines.join("\n")}` : "",
+        hypothesisLines.length ? `\nפערים ודרישות אימות:\n${hypothesisLines.join("\n")}` : "",
+        weakNote,
+        warningLines.length ? `\nמגבלות:\n${warningLines.join("\n")}` : "",
+        "",
+        "שורה תחתונה:",
+        strongClusters.length
+          ? `${meaning} לכן המשמעות היא תפקיד מחבר/מתאם בתוך התיק, לא רק הופעת שם במסמך. השערות או EEI נשארות דרישת בירור ולא עובדה מאושרת. ${leadCitations}`
+          : "אין מספיק בסיס ראייתי לתשובה אנליטית חזקה; נדרש איסוף/אימות נוסף.",
+        includeFallbackNotice ? `\n${fallbackNotice}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+    }
+
+    return [
+      `FCF-R3 status: ${run.audit.answer_status}`,
+      "",
+      "Executive synthesis:",
+      insufficientNotice,
+      coverageLine,
+      coverageChecklistLine,
+      strongClusters.length
+        ? `${meaning} This is supported by diverse direct clusters, led by ${strongClusters[0].label}. ${leadCitations}`
+        : "No strong evidence layer supports a firm analytical conclusion; treat this as investigative guidance.",
+      "",
+      "Evidence clusters and interpretation:",
+      clusterLines.join("\n"),
+      "",
+      "Confidence level:",
+      `${confidenceLevel}. Selected ${run.audit.selected_count} evidence atoms from ${run.audit.candidate_count} candidates across ${run.audit.cluster_count || 0} clusters.`,
+      "",
+      "Citations:",
+      supportingLines.join("\n"),
+      limitingLines.length ? `\nBoundaries / alternative actors:\n${limitingLines.join("\n")}` : "",
+      hypothesisLines.length ? `\nValidation gaps / EEIs:\n${hypothesisLines.join("\n")}` : "",
+      weakNote,
+      warningLines.length ? `\nLimits:\n${warningLines.join("\n")}` : "",
+      "",
+      "Bottom-line assessment:",
+      strongClusters.length
+        ? `${meaning} That means the entity should be treated as a connecting or coordination role in the case, not merely as a name match. Hypotheses or EEIs remain collection requirements, not confirmed facts. ${leadCitations}`
+        : "The corpus does not yet support a strong analytical answer; collect or verify stronger evidence first.",
+      includeFallbackNotice ? `\n${fallbackNotice}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
   if (isHebrew) {
     return [
       `סטטוס FCF-R3: ${run.audit.answer_status}`,

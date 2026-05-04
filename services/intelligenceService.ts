@@ -180,6 +180,7 @@ export type QuestionAnswerOptions = {
     answerId?: string;
     reasoningEngineId?: ReasoningEngineId;
     geminiApiKey?: string;
+    systemInstruction?: string;
     onCitationVerification?: (run: CitationVerificationRun) => void | Promise<void>;
     readPathContext?: {
         knowledgeSnapshot?: string;
@@ -2860,6 +2861,7 @@ ${question}`;
             reasoningEngineId: reasoningEngine.id,
             geminiApiKey: options?.geminiApiKey,
             systemInstruction:
+                options?.systemInstruction ||
                 "You are TEVEL's intelligence analysis copilot. Answer strictly based on the provided context package and retrieved evidence. Do NOT invent facts, translations, or definitions not present in the context. Do NOT repeat yourself. If the context lacks relevant information, say so clearly and stop. Cite evidence IDs in square brackets when available. Be concise and direct.",
             timeoutMs: answerTimeoutMs,
         });

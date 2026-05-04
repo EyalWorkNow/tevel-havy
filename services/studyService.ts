@@ -93,7 +93,18 @@ export class StudyService {
         const snapshot = cloneStudy(studies);
         try {
             if (hasBrowserStorage()) {
-                window.localStorage.setItem(LOCAL_STUDIES_KEY, JSON.stringify(snapshot));
+                try {
+                    window.localStorage.setItem(LOCAL_STUDIES_KEY, JSON.stringify(snapshot));
+                } catch (storageError) {
+                    // Quota exceeded - try pruning oldest studies
+                    if (studies.length > 5) {
+                        console.warn('Pruning oldest studies to clear localStorage space...');
+                        const pruned = studies.slice(0, 5);
+                        window.localStorage.setItem(LOCAL_STUDIES_KEY, JSON.stringify(pruned));
+                    } else {
+                        throw storageError;
+                    }
+                }
                 return;
             }
         } catch (error) {

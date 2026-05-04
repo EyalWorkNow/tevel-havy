@@ -6,6 +6,7 @@ export type ExtractedEntityLike = {
     role?: string;
     confidence?: number;
     chunkIndex?: number;
+    aliases?: string[];
 };
 
 export type EntityRefinementResponse = {
@@ -109,10 +110,16 @@ export class EntityCreationEngine {
         const patterns: Array<{ regex: RegExp; type: string; role: string; confidence: number }> = [
             { regex: /\b\d{1,2}\/\d{1,2}\/\d{4}\b/g, type: "DATE", role: "Explicit date mention", confidence: 0.98 },
             { regex: /\b\d{4}-\d{2}-\d{2}\b/g, type: "DATE", role: "ISO date mention", confidence: 0.98 },
-            { regex: /\b(?:https?:\/\/|www\.)\S+\b/g, type: "ASSET", role: "URL or web resource", confidence: 0.94 },
-            { regex: /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, type: "ASSET", role: "Email address", confidence: 0.96 },
-            { regex: /\b(?:\d{1,3}\.){3}\d{1,3}\b/g, type: "ASSET", role: "IP address", confidence: 0.94 },
-            { regex: /\b0x[a-fA-F0-9]{8,}\b/g, type: "ASSET", role: "Blockchain wallet or hash-like identifier", confidence: 0.92 },
+            { regex: /\b(?:https?:\/\/|www\.)\S+\b/g, type: "DIGITAL_ASSET", role: "URL or web resource", confidence: 0.94 },
+            { regex: /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, type: "COMMUNICATION_CHANNEL", role: "Email address", confidence: 0.96 },
+            { regex: /\b(?:\d{1,3}\.){3}\d{1,3}\b/g, type: "DIGITAL_ASSET", role: "IP address", confidence: 0.94 },
+            { regex: /\b0x[a-fA-F0-9]{8,}\b/g, type: "DIGITAL_ASSET", role: "Blockchain wallet or hash-like identifier", confidence: 0.92 },
+            { regex: /(?<![\p{L}\p{N}._%+-])@[\p{L}\p{N}_]{4,32}/gu, type: "COMMUNICATION_CHANNEL", role: "Messaging handle or alias", confidence: 0.86 },
+            { regex: /\b(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{2,4}\)?[-.\s]?)\d{3,4}[-.\s]?\d{3,4}\b/g, type: "COMMUNICATION_CHANNEL", role: "Phone number or line", confidence: 0.82 },
+            { regex: /\b[A-HJ-NPR-Z0-9]{17}\b/g, type: "IDENTIFIER", role: "VIN or durable equipment identifier", confidence: 0.91 },
+            { regex: /\b[A-Z]{4}\d{7}\b/g, type: "CARGO", role: "Container or shipping unit identifier", confidence: 0.9 },
+            { regex: /\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b/g, type: "FINANCIAL_ACCOUNT", role: "IBAN or banking account", confidence: 0.9 },
+            { regex: /\b[A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b/g, type: "FINANCIAL_ACCOUNT", role: "SWIFT/BIC identifier", confidence: 0.82 },
             { regex: /\b[A-Z]{2,}(?:[-_][A-Z0-9]+)*\b/g, type: "ORGANIZATION", role: "Uppercase coded entity", confidence: 0.62 },
         ];
 
@@ -582,8 +589,20 @@ ${JSON.stringify(
     }
 
     private static inferTitleCaseType(candidate: string): string {
-        if (/\b(?:Unit|Cell|Warehouse|Pier|Terminal|Camp|Base|Harbor|Harbour|Port)\b/i.test(candidate)) {
+        if (/\b(?:Warehouse|Terminal|Clinic|Hospital|University|Campus|Building|Tower|Station|Factory|Plant|Office|Laboratory|Garage|Hangar)\b/i.test(candidate)) {
+            return "FACILITY";
+        }
+        if (/\b(?:Unit|Cell|Pier|Camp|Base|Harbor|Harbour|Port|Road|Avenue|Boulevard|Crossing|District|Valley)\b/i.test(candidate)) {
             return "LOCATION";
+        }
+        if (/\b(?:Toyota|Ford|Chevrolet|Mercedes(?:-Benz)?|BMW|Audi|Volkswagen|Honda|Hyundai|Kia|Nissan|Mazda|Mitsubishi|Isuzu|Volvo|Scania|Tesla|BYD|Renault|Peugeot|Citroen|Fiat|Skoda|MAN|DAF|Iveco|DJI|Caterpillar|Komatsu|John Deere|truck|sedan|pickup|van|bus|tractor|trailer|forklift|drone|excavator)\b/i.test(candidate)) {
+            return "VEHICLE";
+        }
+        if (/\b(?:Phone|Handset|Server|Router|Modem|Laptop|Tablet|Drone|Camera|Repeater|Radio|Gateway)\b/i.test(candidate)) {
+            return "DEVICE";
+        }
+        if (/\b(?:Report|Document|Form|Contract|Invoice|Passport|Manifest|Protocol|License|Certificate|Memo|Dossier)\b/i.test(candidate)) {
+            return "DOCUMENT";
         }
         if (this.isLikelyOrganizationName(candidate)) {
             return "ORGANIZATION";

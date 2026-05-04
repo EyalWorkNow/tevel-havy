@@ -776,17 +776,21 @@ def detect_person_mentions_rules(text: str, chunks: List[Dict[str, Any]]) -> Lis
 
 def detect_person_mentions_list_fragments(text: str, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     mentions: List[Dict[str, Any]] = []
-    for line in [line.strip() for line in re.split(r"\n+", text) if line.strip()]:
-        if not PERSON_LIST_LABEL_PREFIX_REGEX.match(line):
+    pos = 0
+    for raw_line in text.splitlines(keepends=True):
+        line_start = pos
+        pos += len(raw_line)
+        stripped = raw_line.strip()
+        if not stripped or not PERSON_LIST_LABEL_PREFIX_REGEX.match(stripped):
             continue
-        candidate_line = PERSON_LIST_LABEL_PREFIX_REGEX.sub("", line).strip()
+        candidate_line = PERSON_LIST_LABEL_PREFIX_REGEX.sub("", stripped).strip()
         if not candidate_line:
             continue
         for fragment in [clean_person_name(part) for part in re.split(r"\s*[;,،|]\s*", candidate_line) if part.strip()]:
             if not is_plausible_person_name(fragment):
                 continue
-            start = text.find(fragment)
-            if start == -1:
+            start = text.find(fragment, line_start)
+            if start == -1 or start >= pos:
                 continue
             end = start + len(fragment)
             sentence = next((item for item in sentence_spans(text) if start >= item[0] and end <= item[1]), (0, len(text), text))

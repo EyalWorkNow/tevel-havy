@@ -1,0 +1,1429 @@
+{
+  "generatedAt": "2026-04-30T07:50:45.515Z",
+  "query": "Find all entity-contexts for Turkey in this corpus. Cover command/control, explicit Turkish agencies, Hamas-Turkey communications, finance, technology/equipment, logistics, proxy geography, human operators, communications, doctrine/tactics, TIKA indicators, SADAT/EEI, and limiting or alternative-actor evidence. Start with synthesis, cite evidence IDs, distinguish confirmed facts from indirect indicators and hypotheses, and state what it means.",
+  "runsPerMode": 3,
+  "model": "gemini-2.5-flash",
+  "apiKeyPresent": true,
+  "modes": {
+    "gemini_with_fcf": "Gemini receives the FCF-R3 materialized read path, selected evidence audit, and analytical generation instructions.",
+    "gemini_without_fcf": "Gemini receives the same corpus as a direct raw-context dump, without FCF retrieval, clustering, evidence typing, or audit metadata.",
+    "tevel_architecture": "TEVEL runs askLiveResearchQuestion end-to-end: study scoping, FCF-R3 read path, model call, citation verification, and deterministic fallback when the model path fails."
+  },
+  "corpus": [
+    {
+      "id": "bench-command",
+      "title": "Turkey command and communications notes",
+      "date": "2026-04-01T08:00:00.000Z",
+      "source": "Report",
+      "status": "Approved",
+      "tags": [
+        "Turkey",
+        "MIT",
+        "Hamas",
+        "command"
+      ],
+      "intelligence": {
+        "clean_text": "[E-CMD-001] The document states that a MIT handler in Ankara approved the Istanbul meeting agenda for the Hamas external liaison and asked for a revised operational timetable.\n[E-COMM-001] A Hamas external liaison sent a direct Telegram update to a Turkish contact after the Istanbul meeting, summarizing the requested changes.\n[E-LIMIT-001] The same note says weapons procurement was not conducted by the Turkish contact; a separate Hebron broker handled that channel.",
+        "raw_text": "[E-CMD-001] The document states that a MIT handler in Ankara approved the Istanbul meeting agenda for the Hamas external liaison and asked for a revised operational timetable.\n[E-COMM-001] A Hamas external liaison sent a direct Telegram update to a Turkish contact after the Istanbul meeting, summarizing the requested changes.\n[E-LIMIT-001] The same note says weapons procurement was not conducted by the Turkish contact; a separate Hebron broker handled that channel.",
+        "word_count": 70,
+        "document_metadata": {
+          "document_id": "bench-command",
+          "title": "Turkey command and communications notes",
+          "classification": "BENCHMARK_FIXTURE",
+          "author": "TEVEL benchmark harness",
+          "source_orgs": "local synthetic corpus",
+          "language": "en"
+        },
+        "statements": [
+          {
+            "statement_id": "E-CMD-001",
+            "statement_text": "MIT handler in Ankara approved the Istanbul meeting agenda for the Hamas external liaison.",
+            "knowledge": "FACT",
+            "category": "STRATEGIC",
+            "confidence": 0.93,
+            "assumption_flag": false,
+            "intelligence_gap": false,
+            "impact": "CRITICAL",
+            "operational_relevance": "IMMEDIATE"
+          },
+          {
+            "statement_id": "E-COMM-001",
+            "statement_text": "Hamas external liaison sent a direct Telegram update to a Turkish contact after the Istanbul meeting.",
+            "knowledge": "FACT",
+            "category": "TACTICAL",
+            "confidence": 0.9,
+            "assumption_flag": false,
+            "intelligence_gap": false,
+            "impact": "HIGH",
+            "operational_relevance": "HIGH"
+          },
+          {
+            "statement_id": "E-LIMIT-001",
+            "statement_text": "Weapons procurement was not conducted by the Turkish contact; a separate Hebron broker handled that channel.",
+            "knowledge": "FACT",
+            "category": "COLLECTION",
+            "confidence": 0.86,
+            "assumption_flag": false,
+            "intelligence_gap": false,
+            "impact": "MEDIUM",
+            "operational_relevance": "MEDIUM"
+          }
+        ],
+        "intel_questions": [],
+        "intel_tasks": [],
+        "entities": [
+          {
+            "id": "bench-command-ent-1",
+            "name": "Turkey",
+            "type": "LOCATION",
+            "aliases": [
+              "Turkish",
+              "Türkiye",
+              "Turkiye",
+              "טורקיה",
+              "תורכיה"
+            ],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-command-ent-2",
+            "name": "MIT",
+            "type": "ORGANIZATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-command-ent-3",
+            "name": "Ankara",
+            "type": "LOCATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-command-ent-4",
+            "name": "Istanbul",
+            "type": "LOCATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-command-ent-5",
+            "name": "Hamas external liaison",
+            "type": "ORGANIZATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-command-ent-6",
+            "name": "TIKA",
+            "type": "ORGANIZATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-command-ent-7",
+            "name": "SADAT",
+            "type": "ORGANIZATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-command-ent-8",
+            "name": "Qatar Charity",
+            "type": "ORGANIZATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-command-ent-9",
+            "name": "crypto wallet TR-884",
+            "type": "FINANCIAL_ACCOUNT",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-command-ent-10",
+            "name": "Baykar",
+            "type": "ORGANIZATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-command-ent-11",
+            "name": "Gaza logistics cell",
+            "type": "ORGANIZATION",
+            "aliases": [],
+            "confidence": 0.9
+          }
+        ],
+        "relations": [
+          {
+            "source": "MIT",
+            "target": "Hamas external liaison",
+            "type": "COMMUNICATED_WITH",
+            "confidence": 0.92,
+            "statement_id": "E-CMD-001"
+          },
+          {
+            "source": "Turkey",
+            "target": "Istanbul",
+            "type": "ASSOCIATED_WITH",
+            "confidence": 0.88,
+            "statement_id": "E-COMM-001"
+          }
+        ],
+        "insights": [
+          {
+            "type": "summary",
+            "importance": 95,
+            "text": "MIT handler in Ankara approved the Istanbul meeting agenda for the Hamas external liaison."
+          },
+          {
+            "type": "summary",
+            "importance": 80,
+            "text": "Hamas external liaison sent a direct Telegram update to a Turkish contact after the Istanbul meeting."
+          },
+          {
+            "type": "summary",
+            "importance": 60,
+            "text": "Weapons procurement was not conducted by the Turkish contact; a separate Hebron broker handled that channel."
+          }
+        ],
+        "timeline": [],
+        "tactical_assessment": {
+          "ttps": [
+            "external command liaison",
+            "compartmented finance",
+            "dual-use logistics"
+          ],
+          "recommendations": [
+            "Separate direct evidence from indirect indicators before synthesis."
+          ],
+          "gaps": [
+            "Verify SADAT only if independent source spans confirm involvement."
+          ]
+        },
+        "context_cards": {},
+        "graph": {
+          "nodes": [],
+          "edges": []
+        },
+        "reliability": 0.86
+      }
+    },
+    {
+      "id": "bench-finance",
+      "title": "Turkey-linked finance and crypto channel",
+      "date": "2026-04-02T09:30:00.000Z",
+      "source": "Signal",
+      "status": "Approved",
+      "tags": [
+        "Turkey",
+        "finance",
+        "crypto"
+      ],
+      "intelligence": {
+        "clean_text": "[E-FIN-001] A direct transaction record links crypto wallet TR-884, registered to a Turkish operator, with two transfers to the Gaza logistics cell.\n[E-FIN-002] The finance annex says the wallet owner used an Istanbul exchange desk before the transfers.",
+        "raw_text": "[E-FIN-001] A direct transaction record links crypto wallet TR-884, registered to a Turkish operator, with two transfers to the Gaza logistics cell.\n[E-FIN-002] The finance annex says the wallet owner used an Istanbul exchange desk before the transfers.",
+        "word_count": 38,
+        "document_metadata": {
+          "document_id": "bench-finance",
+          "title": "Turkey-linked finance and crypto channel",
+          "classification": "BENCHMARK_FIXTURE",
+          "author": "TEVEL benchmark harness",
+          "source_orgs": "local synthetic corpus",
+          "language": "en"
+        },
+        "statements": [
+          {
+            "statement_id": "E-FIN-001",
+            "statement_text": "Direct transaction record links crypto wallet TR-884, registered to a Turkish operator, with two transfers to the Gaza logistics cell.",
+            "knowledge": "FACT",
+            "category": "FINANCIAL",
+            "confidence": 0.91,
+            "assumption_flag": false,
+            "intelligence_gap": false,
+            "impact": "HIGH",
+            "operational_relevance": "HIGH"
+          },
+          {
+            "statement_id": "E-FIN-002",
+            "statement_text": "The wallet owner used an Istanbul exchange desk before the transfers.",
+            "knowledge": "FACT",
+            "category": "FINANCIAL",
+            "confidence": 0.82,
+            "assumption_flag": false,
+            "intelligence_gap": false,
+            "impact": "MEDIUM",
+            "operational_relevance": "MEDIUM"
+          }
+        ],
+        "intel_questions": [],
+        "intel_tasks": [],
+        "entities": [
+          {
+            "id": "bench-finance-ent-1",
+            "name": "Turkey",
+            "type": "LOCATION",
+            "aliases": [
+              "Turkish",
+              "Türkiye",
+              "Turkiye",
+              "טורקיה",
+              "תורכיה"
+            ],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-finance-ent-2",
+            "name": "MIT",
+            "type": "ORGANIZATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-finance-ent-3",
+            "name": "Ankara",
+            "type": "LOCATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-finance-ent-4",
+            "name": "Istanbul",
+            "type": "LOCATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-finance-ent-5",
+            "name": "Hamas external liaison",
+            "type": "ORGANIZATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-finance-ent-6",
+            "name": "TIKA",
+            "type": "ORGANIZATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-finance-ent-7",
+            "name": "SADAT",
+            "type": "ORGANIZATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-finance-ent-8",
+            "name": "Qatar Charity",
+            "type": "ORGANIZATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-finance-ent-9",
+            "name": "crypto wallet TR-884",
+            "type": "FINANCIAL_ACCOUNT",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-finance-ent-10",
+            "name": "Baykar",
+            "type": "ORGANIZATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-finance-ent-11",
+            "name": "Gaza logistics cell",
+            "type": "ORGANIZATION",
+            "aliases": [],
+            "confidence": 0.9
+          }
+        ],
+        "relations": [
+          {
+            "source": "crypto wallet TR-884",
+            "target": "Gaza logistics cell",
+            "type": "FUNDED_BY",
+            "confidence": 0.88,
+            "statement_id": "E-FIN-001"
+          },
+          {
+            "source": "Turkey",
+            "target": "crypto wallet TR-884",
+            "type": "ASSOCIATED_WITH",
+            "confidence": 0.86,
+            "statement_id": "E-FIN-001"
+          }
+        ],
+        "insights": [
+          {
+            "type": "summary",
+            "importance": 80,
+            "text": "Direct transaction record links crypto wallet TR-884, registered to a Turkish operator, with two transfers to the Gaza logistics cell."
+          },
+          {
+            "type": "summary",
+            "importance": 60,
+            "text": "The wallet owner used an Istanbul exchange desk before the transfers."
+          }
+        ],
+        "timeline": [],
+        "tactical_assessment": {
+          "ttps": [
+            "external command liaison",
+            "compartmented finance",
+            "dual-use logistics"
+          ],
+          "recommendations": [
+            "Separate direct evidence from indirect indicators before synthesis."
+          ],
+          "gaps": [
+            "Verify SADAT only if independent source spans confirm involvement."
+          ]
+        },
+        "context_cards": {},
+        "graph": {
+          "nodes": [],
+          "edges": []
+        },
+        "reliability": 0.86
+      }
+    },
+    {
+      "id": "bench-logistics",
+      "title": "Technology, logistics, and TIKA indicators",
+      "date": "2026-04-03T12:15:00.000Z",
+      "source": "News",
+      "status": "Approved",
+      "tags": [
+        "Turkey",
+        "TIKA",
+        "technology",
+        "logistics"
+      ],
+      "intelligence": {
+        "clean_text": "[E-TECH-001] A procurement list mentions Turkish-made Baykar drone batteries and RF modules routed through a civilian equipment vendor.\n[E-TIKA-001] Photos from a foreign-funded farm compound show a TIKA logo near storage sheds later used by the Gaza logistics cell; the source does not prove TIKA financed or controlled the site.\n[E-GEO-001] The logistics map connects Istanbul, northern Sinai, and Gaza as proxy geography for non-military cargo movement.",
+        "raw_text": "[E-TECH-001] A procurement list mentions Turkish-made Baykar drone batteries and RF modules routed through a civilian equipment vendor.\n[E-TIKA-001] Photos from a foreign-funded farm compound show a TIKA logo near storage sheds later used by the Gaza logistics cell; the source does not prove TIKA financed or controlled the site.\n[E-GEO-001] The logistics map connects Istanbul, northern Sinai, and Gaza as proxy geography for non-military cargo movement.",
+        "word_count": 67,
+        "document_metadata": {
+          "document_id": "bench-logistics",
+          "title": "Technology, logistics, and TIKA indicators",
+          "classification": "BENCHMARK_FIXTURE",
+          "author": "TEVEL benchmark harness",
+          "source_orgs": "local synthetic corpus",
+          "language": "en"
+        },
+        "statements": [
+          {
+            "statement_id": "E-TECH-001",
+            "statement_text": "Procurement list mentions Turkish-made Baykar drone batteries and RF modules routed through a civilian equipment vendor.",
+            "knowledge": "FACT",
+            "category": "LOGISTICAL",
+            "confidence": 0.84,
+            "assumption_flag": false,
+            "intelligence_gap": false,
+            "impact": "HIGH",
+            "operational_relevance": "HIGH"
+          },
+          {
+            "statement_id": "E-TIKA-001",
+            "statement_text": "Photos from a foreign-funded farm compound show a TIKA logo near storage sheds later used by the Gaza logistics cell; the source does not prove TIKA financed or controlled the site.",
+            "knowledge": "FACT",
+            "category": "LOGISTICAL",
+            "confidence": 0.64,
+            "assumption_flag": false,
+            "intelligence_gap": false,
+            "impact": "MEDIUM",
+            "operational_relevance": "MEDIUM"
+          },
+          {
+            "statement_id": "E-GEO-001",
+            "statement_text": "The logistics map connects Istanbul, northern Sinai, and Gaza as proxy geography for non-military cargo movement.",
+            "knowledge": "FACT",
+            "category": "LOGISTICAL",
+            "confidence": 0.78,
+            "assumption_flag": false,
+            "intelligence_gap": false,
+            "impact": "MEDIUM",
+            "operational_relevance": "MEDIUM"
+          }
+        ],
+        "intel_questions": [],
+        "intel_tasks": [],
+        "entities": [
+          {
+            "id": "bench-logistics-ent-1",
+            "name": "Turkey",
+            "type": "LOCATION",
+            "aliases": [
+              "Turkish",
+              "Türkiye",
+              "Turkiye",
+              "טורקיה",
+              "תורכיה"
+            ],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-logistics-ent-2",
+            "name": "MIT",
+            "type": "ORGANIZATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-logistics-ent-3",
+            "name": "Ankara",
+            "type": "LOCATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-logistics-ent-4",
+            "name": "Istanbul",
+            "type": "LOCATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-logistics-ent-5",
+            "name": "Hamas external liaison",
+            "type": "ORGANIZATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-logistics-ent-6",
+            "name": "TIKA",
+            "type": "ORGANIZATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-logistics-ent-7",
+            "name": "SADAT",
+            "type": "ORGANIZATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-logistics-ent-8",
+            "name": "Qatar Charity",
+            "type": "ORGANIZATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-logistics-ent-9",
+            "name": "crypto wallet TR-884",
+            "type": "FINANCIAL_ACCOUNT",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-logistics-ent-10",
+            "name": "Baykar",
+            "type": "ORGANIZATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-logistics-ent-11",
+            "name": "Gaza logistics cell",
+            "type": "ORGANIZATION",
+            "aliases": [],
+            "confidence": 0.9
+          }
+        ],
+        "relations": [
+          {
+            "source": "Baykar",
+            "target": "Gaza logistics cell",
+            "type": "USED_IN",
+            "confidence": 0.82,
+            "statement_id": "E-TECH-001"
+          },
+          {
+            "source": "TIKA",
+            "target": "Gaza logistics cell",
+            "type": "ASSOCIATED_WITH",
+            "confidence": 0.58,
+            "statement_id": "E-TIKA-001"
+          }
+        ],
+        "insights": [
+          {
+            "type": "summary",
+            "importance": 80,
+            "text": "Procurement list mentions Turkish-made Baykar drone batteries and RF modules routed through a civilian equipment vendor."
+          },
+          {
+            "type": "summary",
+            "importance": 60,
+            "text": "Photos from a foreign-funded farm compound show a TIKA logo near storage sheds later used by the Gaza logistics cell; the source does not prove TIKA financed or controlled the site."
+          },
+          {
+            "type": "summary",
+            "importance": 60,
+            "text": "The logistics map connects Istanbul, northern Sinai, and Gaza as proxy geography for non-military cargo movement."
+          }
+        ],
+        "timeline": [],
+        "tactical_assessment": {
+          "ttps": [
+            "external command liaison",
+            "compartmented finance",
+            "dual-use logistics"
+          ],
+          "recommendations": [
+            "Separate direct evidence from indirect indicators before synthesis."
+          ],
+          "gaps": [
+            "Verify SADAT only if independent source spans confirm involvement."
+          ]
+        },
+        "context_cards": {},
+        "graph": {
+          "nodes": [],
+          "edges": []
+        },
+        "reliability": 0.86
+      }
+    },
+    {
+      "id": "bench-eei",
+      "title": "SADAT and doctrine EEI register",
+      "date": "2026-04-04T16:00:00.000Z",
+      "source": "Report",
+      "status": "Approved",
+      "tags": [
+        "Turkey",
+        "SADAT",
+        "EEI",
+        "doctrine"
+      ],
+      "intelligence": {
+        "clean_text": "[E-EEI-001] EEI: Determine whether SADAT personnel provided doctrine or training support to the Gaza logistics cell; no direct source span confirms this involvement.\n[E-DOC-001] A tactics memo describes compartmented courier doctrine copied from a Turkish-language manual, but it does not identify the authoring organization.",
+        "raw_text": "[E-EEI-001] EEI: Determine whether SADAT personnel provided doctrine or training support to the Gaza logistics cell; no direct source span confirms this involvement.\n[E-DOC-001] A tactics memo describes compartmented courier doctrine copied from a Turkish-language manual, but it does not identify the authoring organization.",
+        "word_count": 44,
+        "document_metadata": {
+          "document_id": "bench-eei",
+          "title": "SADAT and doctrine EEI register",
+          "classification": "BENCHMARK_FIXTURE",
+          "author": "TEVEL benchmark harness",
+          "source_orgs": "local synthetic corpus",
+          "language": "en"
+        },
+        "statements": [
+          {
+            "statement_id": "E-EEI-001",
+            "statement_text": "EEI: Determine whether SADAT personnel provided doctrine or training support to the Gaza logistics cell; no direct source span confirms this involvement.",
+            "knowledge": "HYPOTHESIS",
+            "category": "COLLECTION",
+            "confidence": 0.52,
+            "assumption_flag": true,
+            "intelligence_gap": true,
+            "impact": "HIGH",
+            "operational_relevance": "HIGH"
+          },
+          {
+            "statement_id": "E-DOC-001",
+            "statement_text": "A tactics memo describes compartmented courier doctrine copied from a Turkish-language manual, but it does not identify the authoring organization.",
+            "knowledge": "FACT",
+            "category": "TACTICAL",
+            "confidence": 0.66,
+            "assumption_flag": false,
+            "intelligence_gap": false,
+            "impact": "MEDIUM",
+            "operational_relevance": "MEDIUM"
+          }
+        ],
+        "intel_questions": [
+          {
+            "question_id": "bench-eei-eei-1",
+            "statement_id": "E-EEI-001",
+            "question_text": "EEI: Determine whether SADAT personnel provided doctrine or training support to the Gaza logistics cell; no direct source span confirms this involvement.",
+            "priority": "HIGH",
+            "owner": "benchmark"
+          }
+        ],
+        "intel_tasks": [],
+        "entities": [
+          {
+            "id": "bench-eei-ent-1",
+            "name": "Turkey",
+            "type": "LOCATION",
+            "aliases": [
+              "Turkish",
+              "Türkiye",
+              "Turkiye",
+              "טורקיה",
+              "תורכיה"
+            ],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-eei-ent-2",
+            "name": "MIT",
+            "type": "ORGANIZATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-eei-ent-3",
+            "name": "Ankara",
+            "type": "LOCATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-eei-ent-4",
+            "name": "Istanbul",
+            "type": "LOCATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-eei-ent-5",
+            "name": "Hamas external liaison",
+            "type": "ORGANIZATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-eei-ent-6",
+            "name": "TIKA",
+            "type": "ORGANIZATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-eei-ent-7",
+            "name": "SADAT",
+            "type": "ORGANIZATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-eei-ent-8",
+            "name": "Qatar Charity",
+            "type": "ORGANIZATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-eei-ent-9",
+            "name": "crypto wallet TR-884",
+            "type": "FINANCIAL_ACCOUNT",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-eei-ent-10",
+            "name": "Baykar",
+            "type": "ORGANIZATION",
+            "aliases": [],
+            "confidence": 0.9
+          },
+          {
+            "id": "bench-eei-ent-11",
+            "name": "Gaza logistics cell",
+            "type": "ORGANIZATION",
+            "aliases": [],
+            "confidence": 0.9
+          }
+        ],
+        "relations": [
+          {
+            "source": "SADAT",
+            "target": "Gaza logistics cell",
+            "type": "ASSOCIATED_WITH",
+            "confidence": 0.45,
+            "statement_id": "E-EEI-001"
+          }
+        ],
+        "insights": [
+          {
+            "type": "anomaly",
+            "importance": 80,
+            "text": "EEI: Determine whether SADAT personnel provided doctrine or training support to the Gaza logistics cell; no direct source span confirms this involvement."
+          },
+          {
+            "type": "summary",
+            "importance": 60,
+            "text": "A tactics memo describes compartmented courier doctrine copied from a Turkish-language manual, but it does not identify the authoring organization."
+          }
+        ],
+        "timeline": [],
+        "tactical_assessment": {
+          "ttps": [
+            "external command liaison",
+            "compartmented finance",
+            "dual-use logistics"
+          ],
+          "recommendations": [
+            "Separate direct evidence from indirect indicators before synthesis."
+          ],
+          "gaps": [
+            "Verify SADAT only if independent source spans confirm involvement."
+          ]
+        },
+        "context_cards": {},
+        "graph": {
+          "nodes": [],
+          "edges": []
+        },
+        "reliability": 0.86
+      }
+    }
+  ],
+  "summary": [
+    {
+      "mode": "gemini_with_fcf",
+      "runs": 3,
+      "successes": 1,
+      "skipped": 0,
+      "successRate": 0.333,
+      "avgDurationMs": 4925,
+      "avgPromptTokens": 1003,
+      "avgTotalTokens": 3809,
+      "avgQualityScore": 6,
+      "maxQualityScore": 7
+    },
+    {
+      "mode": "gemini_without_fcf",
+      "runs": 3,
+      "successes": 1,
+      "skipped": 0,
+      "successRate": 0.333,
+      "avgDurationMs": 6350,
+      "avgPromptTokens": 871,
+      "avgTotalTokens": 4856,
+      "avgQualityScore": 6,
+      "maxQualityScore": 7
+    },
+    {
+      "mode": "tevel_architecture",
+      "runs": 3,
+      "successes": 3,
+      "skipped": 0,
+      "successRate": 1,
+      "avgDurationMs": 478,
+      "avgPromptTokens": null,
+      "avgTotalTokens": null,
+      "avgQualityScore": 7,
+      "maxQualityScore": 7
+    }
+  ],
+  "results": [
+    {
+      "runId": "gemini_with_fcf-1-1777535410255",
+      "mode": "gemini_with_fcf",
+      "iteration": 1,
+      "query": "Find all entity-contexts for Turkey in this corpus. Cover command/control, explicit Turkish agencies, Hamas-Turkey communications, finance, technology/equipment, logistics, proxy geography, human operators, communications, doctrine/tactics, TIKA indicators, SADAT/EEI, and limiting or alternative-actor evidence. Start with synthesis, cite evidence IDs, distinguish confirmed facts from indirect indicators and hypotheses, and state what it means.",
+      "startedAt": "2026-04-30T07:50:10.254Z",
+      "durationMs": 13971,
+      "success": true,
+      "skipped": false,
+      "answer": "**Executive Synthesis:**\n\nTurkey is directly implicated in several facets of support and interaction with the Gaza logistics cell and Hamas external liaison, ranging from operational oversight and financial transactions to the provision of technology and logistical pathways. Confirmed evidence indicates a Turkish intelligence (MIT) handler in Ankara approved a Hamas meeting agenda, a Turkish operator managed a crypto wallet used for transfers to the Gaza logistics cell, and Turkish-made drone components were procured. Istanbul serves as a confirmed proxy geography for non-military cargo movement. Communications between Hamas and a Turkish contact are also confirmed. Indirect indicators suggest a potential TIKA presence at a compound used by the Gaza logistics cell, though direct involvement is not proven. An explicit validation gap exists regarding SADAT's potential role in doctrine or training. Importantly, confirmed limiting evidence indicates that a Turkish contact was not involved in weapons procurement, which was handled by a separate actor.\n\n**Evidence Clusters:**\n\n1.  **Command/Control & Explicit Turkish Agencies:**\n    *   **Confirmed Fact:** An MIT handler in Ankara approved the Istanbul meeting agenda for the Hamas external liaison. (fcf_insight_5_e860d86f)\n    *   **Interpretation:** This indicates direct operational oversight and coordination by a Turkish state intelligence agency (MIT) concerning Hamas activities.\n    *   **Confidence:** High\n\n2.  **Hamas-Turkey Communications:**\n    *   **Confirmed Fact:** The Hamas external liaison sent a direct Telegram update to a Turkish contact after the Istanbul meeting. (fcf_insight_6_a7384597)\n    *   **Interpretation:** This confirms direct communication channels between Hamas and individuals in Turkey following strategic meetings.\n    *   **Confidence:** High\n\n3.  **Finance:**\n    *   **Confirmed Fact:** A crypto wallet (TR-884), registered to a Turkish operator, was directly linked to two transfers to the Gaza logistics cell. (fcf_insight_8_881bcd17)\n    *   **Interpretation:** This establishes a direct financial link from a Turkish-associated entity to the Gaza logistics cell.\n    *   **Confidence:** High\n\n4.  **Technology/Equipment:**\n    *   **Confirmed Fact:** A procurement list included Turkish-made Baykar drone batteries and RF modules, routed through a civilian equipment vendor. (fcf_insight_0_b6ca95cf)\n    *   **Interpretation:** This confirms the sourcing of specific military-applicable technology from Turkey for the Gaza logistics cell.\n    *   **Confidence:** High\n\n5.  **Logistics & Proxy Geography:**\n    *   **Confirmed Fact:** A logistics map connects Istanbul, northern Sinai, and Gaza as proxy geography for non-military cargo movement. (fcf_insight_2_9d53f97d)\n    *   **Interpretation:** Istanbul is identified as a key node in a logistical network facilitating the movement of non-military cargo to Gaza.\n    *   **Confidence:** High\n\n6.  **Human Operators:**\n    *   **Confirmed Fact:** An MIT handler in Ankara (fcf_insight_5_e860d86f), a Turkish operator of crypto wallet TR-884 (fcf_insight_8_881bcd17), and a Turkish contact receiving Telegram updates (fcf_insight_6_a7384597) are identified.\n    *   **Interpretation:** Multiple Turkish individuals or entities are directly involved in operational, financial, and communication aspects.\n    *   **Confidence:** High\n\n7.  **Doctrine/Tactics:**\n    *   **Confirmed Fact:** A tactics memo describes compartmented courier doctrine copied from a Turkish-language manual. (fcf_insight_4_13ec837e)\n    *   **Interpretation:** This indicates the transfer or adoption of operational doctrine originating from a Turkish source, though the specific authoring organization is not identified.\n    *   **Confidence:** Medium\n    *   **EEI:** There is an explicit validation gap regarding whether SADAT personnel provided doctrine or training support to the Gaza logistics cell. No direct source span confirms this involvement. (fcf_insight_3_8bf58502)\n    *   **Interpretation:** The potential for SADAT involvement in doctrine/training remains an unconfirmed hypothesis requiring further investigation.\n    *   **Confidence:** Low (EEI)\n\n8.  **TIKA Indicators:**\n    *   **Indirect Indicator:** Photos from a foreign-funded farm compound show a TIKA logo near storage sheds later used by the Gaza logistics cell; the source does not prove TIKA's direct involvement in the logistics cell's activities. (fcf_insight_1_04f19005)\n    *   **Interpretation:** This suggests a potential, but unconfirmed, nexus between TIKA-associated infrastructure and the Gaza logistics cell's operational sites.\n    *   **Confidence:** Low\n\n9.  **SADAT/EEI:**\n    *   **EEI:** Determine whether SADAT personnel provided doctrine or training support to the Gaza logistics cell; no direct source span confirms this involvement. (fcf_insight_3_8bf58502)\n    *   **Interpretation:** This is a specific area identified for further intelligence gathering, indicating a lack of confirmed evidence at present.\n    *   **Confidence:** Low (EEI)\n\n10. **Limiting or Alternative-Actor Evidence:**\n    *   **Confirmed Fact:** Weapons procurement was not conducted by the Turkish contact; a separate Hebron broker handled that channel. (fcf_insight_7_534c7bf7)\n    *   **Interpretation:** This clarifies that while Turkey is involved in other support areas, direct weapons procurement by the identified Turkish contact is explicitly ruled out, pointing to an alternative actor for this specific activity.\n    *   **Confidence:** High\n\n**Bottom-Line Assessment:**\n\nTurkey, through various state and non-state actors, is confirmed to be a significant enabler and point of contact for the Gaza logistics cell and Hamas external liaison. This involvement includes direct operational control via MIT, financial transfers from a Turkish operator, provision of Turkish-made technology, and logistical pathways through Istanbul. Communications between Hamas and Turkish contacts are also confirmed. While there are indirect indicators of TIKA's potential infrastructure overlap with the logistics cell, and an explicit EEI regarding SADAT's role in doctrine/training, these remain unconfirmed. Crucially, direct Turkish involvement in weapons procurement for the Gaza logistics cell is explicitly negated by the evidence, which points to a separate Hebron-based broker for that channel.",
+      "tokens": {
+        "promptTokenCount": 1003,
+        "candidatesTokenCount": 1410,
+        "totalTokenCount": 3809,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 1003
+          }
+        ],
+        "thoughtsTokenCount": 1396
+      },
+      "technical": {
+        "model": "gemini-2.5-flash",
+        "endpoint": "v1beta",
+        "finishReason": "STOP",
+        "safetyRatings": [],
+        "contextMode": "fcf_r3_materialized_context",
+        "selectedEvidence": 9,
+        "candidateEvidence": 10,
+        "coverageChecklist": {
+          "strategic_command": "not_found",
+          "operational_control": "found",
+          "institutional_actors": "not_found",
+          "finance": "found",
+          "technology_equipment": "found",
+          "logistics": "found",
+          "communications": "found",
+          "proxy_geography": "not_found",
+          "human_operators": "not_found",
+          "doctrine_tactics": "found",
+          "limiting_evidence": "found"
+        },
+        "warnings": [
+          "Second-pass retrieval added evidence for missing entity-context types."
+        ]
+      },
+      "quality": {
+        "score": 6,
+        "maxScore": 7,
+        "directCommandOrControl": true,
+        "directCommunication": true,
+        "financeDirectness": true,
+        "tikaCaution": true,
+        "sadatAsEei": true,
+        "citationsOrEvidenceIds": false,
+        "bottomLine": true,
+        "notes": [
+          "No visible evidence IDs/citations were detected."
+        ]
+      }
+    },
+    {
+      "runId": "gemini_with_fcf-2-1777535424226",
+      "mode": "gemini_with_fcf",
+      "iteration": 2,
+      "query": "Find all entity-contexts for Turkey in this corpus. Cover command/control, explicit Turkish agencies, Hamas-Turkey communications, finance, technology/equipment, logistics, proxy geography, human operators, communications, doctrine/tactics, TIKA indicators, SADAT/EEI, and limiting or alternative-actor evidence. Start with synthesis, cite evidence IDs, distinguish confirmed facts from indirect indicators and hypotheses, and state what it means.",
+      "startedAt": "2026-04-30T07:50:24.226Z",
+      "durationMs": 412,
+      "success": false,
+      "skipped": false,
+      "error": "Gemini HTTP 400: {\"error\":{\"code\":400,\"message\":\"Invalid JSON payload received. Unknown name \\\"systemInstruction\\\": Cannot find field.\",\"status\":\"INVALID_ARGUMENT\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.BadRequest\",\"fieldViolations\":[{\"description\":\"Invalid JSON payload received. Unknown name \\\"systemInstruction\\\": Cannot find field.\"}]}]}}",
+      "answer": "",
+      "tokens": null,
+      "technical": {
+        "model": "gemini-2.5-flash",
+        "apiKeyPresent": true
+      },
+      "quality": {
+        "score": 0,
+        "maxScore": 7,
+        "directCommandOrControl": false,
+        "directCommunication": false,
+        "financeDirectness": false,
+        "tikaCaution": false,
+        "sadatAsEei": false,
+        "citationsOrEvidenceIds": false,
+        "bottomLine": false,
+        "notes": [
+          "No visible evidence IDs/citations were detected.",
+          "Direct command/control context was not clearly covered.",
+          "Direct Hamas-Turkey communication context was not clearly covered.",
+          "Finance/crypto context was not clearly covered.",
+          "TIKA/logo indicator was not phrased cautiously.",
+          "SADAT/EEI was not clearly separated as a hypothesis or validation gap.",
+          "No explicit bottom-line or meaning assessment was detected."
+        ]
+      }
+    },
+    {
+      "runId": "gemini_with_fcf-3-1777535424638",
+      "mode": "gemini_with_fcf",
+      "iteration": 3,
+      "query": "Find all entity-contexts for Turkey in this corpus. Cover command/control, explicit Turkish agencies, Hamas-Turkey communications, finance, technology/equipment, logistics, proxy geography, human operators, communications, doctrine/tactics, TIKA indicators, SADAT/EEI, and limiting or alternative-actor evidence. Start with synthesis, cite evidence IDs, distinguish confirmed facts from indirect indicators and hypotheses, and state what it means.",
+      "startedAt": "2026-04-30T07:50:24.638Z",
+      "durationMs": 393,
+      "success": false,
+      "skipped": false,
+      "error": "Gemini HTTP 400: {\"error\":{\"code\":400,\"message\":\"Invalid JSON payload received. Unknown name \\\"systemInstruction\\\": Cannot find field.\",\"status\":\"INVALID_ARGUMENT\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.BadRequest\",\"fieldViolations\":[{\"description\":\"Invalid JSON payload received. Unknown name \\\"systemInstruction\\\": Cannot find field.\"}]}]}}",
+      "answer": "",
+      "tokens": null,
+      "technical": {
+        "model": "gemini-2.5-flash",
+        "apiKeyPresent": true
+      },
+      "quality": {
+        "score": 0,
+        "maxScore": 7,
+        "directCommandOrControl": false,
+        "directCommunication": false,
+        "financeDirectness": false,
+        "tikaCaution": false,
+        "sadatAsEei": false,
+        "citationsOrEvidenceIds": false,
+        "bottomLine": false,
+        "notes": [
+          "No visible evidence IDs/citations were detected.",
+          "Direct command/control context was not clearly covered.",
+          "Direct Hamas-Turkey communication context was not clearly covered.",
+          "Finance/crypto context was not clearly covered.",
+          "TIKA/logo indicator was not phrased cautiously.",
+          "SADAT/EEI was not clearly separated as a hypothesis or validation gap.",
+          "No explicit bottom-line or meaning assessment was detected."
+        ]
+      }
+    },
+    {
+      "runId": "gemini_without_fcf-1-1777535425031",
+      "mode": "gemini_without_fcf",
+      "iteration": 1,
+      "query": "Find all entity-contexts for Turkey in this corpus. Cover command/control, explicit Turkish agencies, Hamas-Turkey communications, finance, technology/equipment, logistics, proxy geography, human operators, communications, doctrine/tactics, TIKA indicators, SADAT/EEI, and limiting or alternative-actor evidence. Start with synthesis, cite evidence IDs, distinguish confirmed facts from indirect indicators and hypotheses, and state what it means.",
+      "startedAt": "2026-04-30T07:50:25.031Z",
+      "durationMs": 398,
+      "success": false,
+      "skipped": false,
+      "error": "Gemini HTTP 400: {\"error\":{\"code\":400,\"message\":\"Invalid JSON payload received. Unknown name \\\"systemInstruction\\\": Cannot find field.\",\"status\":\"INVALID_ARGUMENT\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.BadRequest\",\"fieldViolations\":[{\"description\":\"Invalid JSON payload received. Unknown name \\\"systemInstruction\\\": Cannot find field.\"}]}]}}",
+      "answer": "",
+      "tokens": null,
+      "technical": {
+        "model": "gemini-2.5-flash",
+        "apiKeyPresent": true
+      },
+      "quality": {
+        "score": 0,
+        "maxScore": 7,
+        "directCommandOrControl": false,
+        "directCommunication": false,
+        "financeDirectness": false,
+        "tikaCaution": false,
+        "sadatAsEei": false,
+        "citationsOrEvidenceIds": false,
+        "bottomLine": false,
+        "notes": [
+          "No visible evidence IDs/citations were detected.",
+          "Direct command/control context was not clearly covered.",
+          "Direct Hamas-Turkey communication context was not clearly covered.",
+          "Finance/crypto context was not clearly covered.",
+          "TIKA/logo indicator was not phrased cautiously.",
+          "SADAT/EEI was not clearly separated as a hypothesis or validation gap.",
+          "No explicit bottom-line or meaning assessment was detected."
+        ]
+      }
+    },
+    {
+      "runId": "gemini_without_fcf-2-1777535425429",
+      "mode": "gemini_without_fcf",
+      "iteration": 2,
+      "query": "Find all entity-contexts for Turkey in this corpus. Cover command/control, explicit Turkish agencies, Hamas-Turkey communications, finance, technology/equipment, logistics, proxy geography, human operators, communications, doctrine/tactics, TIKA indicators, SADAT/EEI, and limiting or alternative-actor evidence. Start with synthesis, cite evidence IDs, distinguish confirmed facts from indirect indicators and hypotheses, and state what it means.",
+      "startedAt": "2026-04-30T07:50:25.429Z",
+      "durationMs": 455,
+      "success": false,
+      "skipped": false,
+      "error": "Gemini HTTP 400: {\"error\":{\"code\":400,\"message\":\"Invalid JSON payload received. Unknown name \\\"systemInstruction\\\": Cannot find field.\",\"status\":\"INVALID_ARGUMENT\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.BadRequest\",\"fieldViolations\":[{\"description\":\"Invalid JSON payload received. Unknown name \\\"systemInstruction\\\": Cannot find field.\"}]}]}}",
+      "answer": "",
+      "tokens": null,
+      "technical": {
+        "model": "gemini-2.5-flash",
+        "apiKeyPresent": true
+      },
+      "quality": {
+        "score": 0,
+        "maxScore": 7,
+        "directCommandOrControl": false,
+        "directCommunication": false,
+        "financeDirectness": false,
+        "tikaCaution": false,
+        "sadatAsEei": false,
+        "citationsOrEvidenceIds": false,
+        "bottomLine": false,
+        "notes": [
+          "No visible evidence IDs/citations were detected.",
+          "Direct command/control context was not clearly covered.",
+          "Direct Hamas-Turkey communication context was not clearly covered.",
+          "Finance/crypto context was not clearly covered.",
+          "TIKA/logo indicator was not phrased cautiously.",
+          "SADAT/EEI was not clearly separated as a hypothesis or validation gap.",
+          "No explicit bottom-line or meaning assessment was detected."
+        ]
+      }
+    },
+    {
+      "runId": "gemini_without_fcf-3-1777535425884",
+      "mode": "gemini_without_fcf",
+      "iteration": 3,
+      "query": "Find all entity-contexts for Turkey in this corpus. Cover command/control, explicit Turkish agencies, Hamas-Turkey communications, finance, technology/equipment, logistics, proxy geography, human operators, communications, doctrine/tactics, TIKA indicators, SADAT/EEI, and limiting or alternative-actor evidence. Start with synthesis, cite evidence IDs, distinguish confirmed facts from indirect indicators and hypotheses, and state what it means.",
+      "startedAt": "2026-04-30T07:50:25.884Z",
+      "durationMs": 18196,
+      "success": true,
+      "skipped": false,
+      "answer": "Turkey demonstrates confirmed involvement in command/control, communications, finance, and logistics supporting the Gaza logistics cell, primarily through state and non-state actors. This includes direct approval of Hamas operational planning by a Turkish state agency, financial transfers by a Turkish operator, and the use of Istanbul as a logistical hub. While direct weapons procurement by the identified Turkish contact is explicitly excluded, indicators suggest potential Turkish origins for operational doctrine and the presence of a Turkish state agency (TIKA) at a logistics site, though its direct involvement in supporting the cell is unconfirmed. An intelligence requirement exists regarding SADAT's potential training support, but no evidence confirms this.\n\n**Entity-Contexts for Turkey:**\n\n**1. Command/Control:**\n*   **Confirmed Fact:** A MIT handler in Ankara approved the Istanbul meeting agenda for the Hamas external liaison (E-CMD-001).\n*   **Meaning:** This indicates direct involvement of a Turkish state intelligence agency in approving Hamas's operational planning.\n\n**2. Explicit Turkish Agencies:**\n*   **Confirmed Fact:** A MIT handler is identified in Ankara (E-CMD-001).\n*   **Indirect Indicator/Unconfirmed:** A TIKA logo was observed near storage sheds later used by the Gaza logistics cell; however, the source explicitly states it does not prove TIKA financed or controlled the site (E-TIKA-001).\n*   **Meaning:** MIT is directly involved in command aspects. TIKA's presence at a logistics site is noted, but its direct role in supporting the Gaza logistics cell is not confirmed by the corpus.\n\n**3. Hamas-Turkey Communications:**\n*   **Confirmed Fact:** A MIT handler approved a Hamas meeting agenda (E-CMD-001). A Hamas external liaison sent a direct Telegram update to a Turkish contact after the Istanbul meeting (E-COMM-001).\n*   **Meaning:** Direct communication channels exist between Hamas and Turkish contacts, including a Turkish state intelligence agency (MIT), for operational coordination and updates.\n\n**4. Finance:**\n*   **Confirmed Fact:** A direct transaction record links crypto wallet TR-884, registered to a Turkish operator, with two transfers to the Gaza logistics cell (E-FIN-001). The wallet owner used an Istanbul exchange desk before these transfers (E-FIN-002).\n*   **Meaning:** Financial support for the Gaza logistics cell is directly traceable to a Turkish operator and involves an Istanbul-based financial exchange.\n\n**5. Technology/Equipment:**\n*   **Confirmed Fact:** A procurement list mentions Turkish-made Baykar drone batteries and RF modules (E-TECH-001).\n*   **Meaning:** Turkish-manufactured technology, specifically components for drones, is being procured, suggesting a potential supply chain originating in Turkey for advanced equipment.\n\n**6. Logistics:**\n*   **Confirmed Fact:** Istanbul is connected with northern Sinai and Gaza as proxy geography for non-military cargo movement (E-GEO-001). Storage sheds with a TIKA logo were later used by the Gaza logistics cell (E-TIKA-001). Financial transfers were made to the Gaza logistics cell (E-FIN-001).\n*   **Meaning:** Turkey, particularly Istanbul, functions as a key node in a logistical corridor for non-military cargo destined for Gaza, with potential links to storage facilities.\n\n**7. Proxy Geography:**\n*   **Confirmed Fact:** Istanbul is identified as part of a proxy geography connecting to northern Sinai and Gaza for non-military cargo movement (E-GEO-001).\n*   **Meaning:** Istanbul serves as a critical transit point in a logistical network supporting Gaza.\n\n**8. Human Operators:**\n*   **Confirmed Fact:** An MIT handler in Ankara (E-CMD-001), a Turkish contact (E-COMM-001), and a Turkish operator registered to a crypto wallet (E-FIN-001) are identified.\n*   **Meaning:** Multiple Turkish individuals are involved in various capacities, including state intelligence, communication, and financial operations.\n\n**9. Communications:**\n*   **Confirmed Fact:** A MIT handler approved an agenda (E-CMD-001), and a Hamas liaison sent a direct Telegram update to a Turkish contact (E-COMM-001).\n*   **Meaning:** Secure and direct communication channels, including Telegram, are utilized for operational coordination between Hamas and Turkish entities.\n\n**10. Doctrine/Tactics:**\n*   **Indirect Indicator:** A tactics memo describes compartmented courier doctrine copied from a Turkish-language manual, but the authoring organization is not identified (E-DOC-001).\n*   **Meaning:** There is an indication that operational doctrine used by the Gaza logistics cell may have Turkish origins, though direct attribution to a specific Turkish organization is not confirmed.\n\n**11. TIKA Indicators:**\n*   **Indirect Indicator/Unconfirmed:** Photos show a TIKA logo near storage sheds later used by the Gaza logistics cell; the source explicitly states it does not prove TIKA financed or controlled the site (E-TIKA-001).\n*   **Meaning:** While a TIKA logo is present at a site used by the Gaza logistics cell, there is no confirmed evidence that TIKA directly financed or controlled the site or supported the cell's activities.\n\n**12. SADAT/EEI:**\n*   **Hypothesis/Unconfirmed:** An EEI exists to determine whether SADAT personnel provided doctrine or training support to the Gaza logistics cell, but no direct source confirms this involvement (E-EEI-001).\n*   **Meaning:** The corpus identifies an intelligence gap regarding SADAT's potential involvement, but provides no evidence to confirm or deny it.\n\n**13. Limiting or Alternative-Actor Evidence:**\n*   **Confirmed Fact:** Weapons procurement was not conducted by the identified Turkish contact; a separate Hebron broker handled that channel (E-LIMIT-001).\n*   **Meaning:** While Turkey is involved in various support functions, direct weapons procurement for the Gaza logistics cell through the identified Turkish contact is explicitly excluded, indicating that this specific function is handled by an alternative actor.",
+      "tokens": {
+        "promptTokenCount": 871,
+        "candidatesTokenCount": 1306,
+        "totalTokenCount": 4856,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 871
+          }
+        ],
+        "thoughtsTokenCount": 2679
+      },
+      "technical": {
+        "model": "gemini-2.5-flash",
+        "endpoint": "v1beta",
+        "finishReason": "STOP",
+        "safetyRatings": [],
+        "contextMode": "raw_context_dump",
+        "studies": 4
+      },
+      "quality": {
+        "score": 6,
+        "maxScore": 7,
+        "directCommandOrControl": true,
+        "directCommunication": true,
+        "financeDirectness": true,
+        "tikaCaution": true,
+        "sadatAsEei": true,
+        "citationsOrEvidenceIds": false,
+        "bottomLine": true,
+        "notes": [
+          "No visible evidence IDs/citations were detected."
+        ]
+      }
+    },
+    {
+      "runId": "tevel_architecture-1-1777535444080",
+      "mode": "tevel_architecture",
+      "iteration": 1,
+      "query": "Find all entity-contexts for Turkey in this corpus. Cover command/control, explicit Turkish agencies, Hamas-Turkey communications, finance, technology/equipment, logistics, proxy geography, human operators, communications, doctrine/tactics, TIKA indicators, SADAT/EEI, and limiting or alternative-actor evidence. Start with synthesis, cite evidence IDs, distinguish confirmed facts from indirect indicators and hypotheses, and state what it means.",
+      "startedAt": "2026-04-30T07:50:44.080Z",
+      "durationMs": 550,
+      "success": true,
+      "skipped": false,
+      "answer": "FCF-R3 status: current-supported\nExecutive synthesis:\nCoverage validation found broad coverage of selected evidence contexts: Finance, Operational control, Doctrine / tactics, Technology / equipment, Communications, Boundary / alternative actor, Logistics.\nCoverage checklist: no strong evidence was found for Strategic command, Institutional actors, Proxy / geography, Human operators.\nCore meaning: the entity functions as a command/control axis, finance node, communications coordination node, technology/equipment axis, proxy/geography context in the case. This is supported by diverse direct clusters, led by Finance: crypto wallet TR-884 / Gaza logistics cell. [fcf_insight_8_881bcd17] [fcf_insight_5_e860d86f] [fcf_insight_4_13ec837e]\nEvidence clusters and interpretation:\n1. Finance: crypto wallet TR-884 / Gaza logistics cell (status=confirmed_direct; confidence=high): The document states / supports: Finance: crypto wallet TR-884 / Gaza logistics cell: Direct transaction record links crypto wallet TR-884, registered to a Turkish operator, with two transfers to the Gaza logistics cell. [fcf_insight_8_881bcd17]\n2. Operational control: Hamas external liaison / Istanbul (status=confirmed_direct; confidence=high): The document states / supports: Operational control: Hamas external liaison / Istanbul: MIT handler in Ankara approved the Istanbul meeting agenda for the Hamas external liaison. [fcf_insight_5_e860d86f]\n3. Doctrine / tactics: Turkey / Turkish (status=confirmed_direct; confidence=medium): The document states / supports: Doctrine / tactics: Turkey / Turkish: A tactics memo describes compartmented courier doctrine copied from a Turkish-language manual, but it does not identify the authoring organization. [fcf_insight_4_13ec837e]\n4. Communications: Hamas external liaison / Istanbul (status=confirmed_direct; confidence=high): The document states / supports: Communications: Hamas external liaison / Istanbul: Hamas external liaison sent a direct Telegram update to a Turkish contact after the Istanbul meeting. [fcf_insight_6_a7384597]\n5. Technology / equipment: Turkey / Turkish (status=confirmed_direct; confidence=high): The document states / supports: Technology / equipment: Turkey / Turkish: Procurement list mentions Turkish-made Baykar drone batteries and RF modules routed through a civilian equipment vendor. [fcf_insight_0_b6ca95cf]\n6. Logistics: Gaza logistics cell / Istanbul (status=confirmed_direct; confidence=medium): The document states / supports: Logistics: Gaza logistics cell / Istanbul: The logistics map connects Istanbul, northern Sinai, and Gaza as proxy geography for non-military cargo movement. [fcf_insight_2_9d53f97d]\n7. Operational control: Gaza logistics cell / TIKA (status=indirect_indicator; confidence=low): Possible indication: Operational control: Gaza logistics cell / TIKA: Photos from a foreign-funded farm compound show a TIKA logo near storage sheds later used by the Gaza logistics cell; the source does not prove TIKA financed or controlled the site. [fcf_insight_1_04f19005]\nConfidence level:\nmedium-high. Selected 9 evidence atoms from 10 candidates across 9 clusters.\nCitations:\n- The document states / supports: Direct transaction record links crypto wallet TR-884, registered to a Turkish operator, with two transfers to the Gaza logistics cell. [fcf_insight_8_881bcd17]\n- The document states / supports: MIT handler in Ankara approved the Istanbul meeting agenda for the Hamas external liaison. [fcf_insight_5_e860d86f]\n- The document states / supports: A tactics memo describes compartmented courier doctrine copied from a Turkish-language manual, but it does not identify the authoring organization. [fcf_insight_4_13ec837e]\n- The document states / supports: Procurement list mentions Turkish-made Baykar drone batteries and RF modules routed through a civilian equipment vendor. [fcf_insight_0_b6ca95cf]\n- Possible indication: Photos from a foreign-funded farm compound show a TIKA logo near storage sheds later used by the Gaza logistics cell; the source does not prove TIKA financed or controlled the site. [fcf_insight_1_04f19005]\n- The document states / supports: Hamas external liaison sent a direct Telegram update to a Turkish contact after the Istanbul meeting. [fcf_insight_6_a7384597]\n- Boundary of involvement / alternative actor: Weapons procurement was not conducted by the Turkish contact; a separate Hebron broker handled that channel. [fcf_insight_7_534c7bf7]\n- The document states / supports: The logistics map connects Istanbul, northern Sinai, and Gaza as proxy geography for non-military cargo movement. [fcf_insight_2_9d53f97d]\n\nBoundaries / alternative actors:\n- Boundary of involvement / alternative actor: Boundary / alternative actor: Turkey / Turkish: Weapons procurement was not conducted by the Turkish contact; a separate Hebron broker handled that channel. [fcf_insight_7_534c7bf7] This does not prove direct involvement by the queried entity; it clarifies the boundary of involvement.\n\nValidation gaps / EEIs:\n- status=hypothesis_eei; confidence=low: Doctrine / tactics: Gaza logistics cell / SADAT: EEI: Determine whether SADAT personnel provided doctrine or training support to the Gaza logistics cell; no direct source span confirms this involvement. [fcf_insight_3_8bf58502]\n\nLimits:\n- Second-pass retrieval added evidence for missing entity-context types.\nBottom-line assessment:\nCore meaning: the entity functions as a command/control axis, finance node, communications coordination node, technology/equipment axis, proxy/geography context in the case. That means the entity should be treated as a connecting or coordination role in the case, not merely as a name match. Hypotheses or EEIs remain collection requirements, not confirmed facts. [fcf_insight_8_881bcd17] [fcf_insight_5_e860d86f] [fcf_insight_4_13ec837e]\n\nThe cloud reasoning engine was unavailable, so this deterministic FCF-R3 answer was assembled from selected evidence.",
+      "tokens": null,
+      "technical": {
+        "contextMode": "askLiveResearchQuestion",
+        "citationGuard": "active",
+        "verificationNote": "Citation verification: unsupported (63% supported claims).",
+        "warnings": [
+          "Citation-ready retrieval artifacts are unavailable for the selected scope.",
+          "Second-pass retrieval added evidence for missing entity-context types.",
+          "Comms offline: unable to reach the cloud reasoning engine."
+        ],
+        "scope": {
+          "totalStudies": 4,
+          "scopedStudies": 4,
+          "selectedStudies": 4,
+          "totalEntities": 11,
+          "totalRelations": 7,
+          "citationReadyStudies": 0,
+          "watchlistHits": 0,
+          "retrievalBundles": 0,
+          "retrievalHits": 0
+        },
+        "engineTrace": {
+          "engineId": "gemini-cloud",
+          "engineLabel": "Gemini 2.5 Flash",
+          "engineSurface": "cloud",
+          "responseMode": "deterministic-fallback",
+          "failureKind": "offline",
+          "failureMessage": "Comms offline: unable to reach the cloud reasoning engine."
+        },
+        "fcfAudit": {
+          "answer_status": "current-supported",
+          "candidate_count": 10,
+          "pruned_count": 15,
+          "selected_count": 9,
+          "cluster_count": 9,
+          "direct_evidence_count": 7,
+          "weak_evidence_count": 0,
+          "context_chars": 2691,
+          "estimated_input_tokens": 673,
+          "selected_evidence_ids": [
+            "fcf_insight_8_881bcd17",
+            "fcf_insight_5_e860d86f",
+            "fcf_insight_4_13ec837e",
+            "fcf_insight_0_b6ca95cf",
+            "fcf_insight_1_04f19005",
+            "fcf_insight_3_8bf58502",
+            "fcf_insight_6_a7384597",
+            "fcf_insight_7_534c7bf7",
+            "fcf_insight_2_9d53f97d"
+          ],
+          "found_context_types": [
+            "finance",
+            "operational_control",
+            "doctrine_tactics",
+            "technology_equipment",
+            "communications",
+            "limiting_evidence",
+            "logistics"
+          ],
+          "missing_context_types": [],
+          "context_coverage_score": 1,
+          "coverage_complete": true,
+          "second_pass_retrieval": true,
+          "coverage_checklist": {
+            "strategic_command": "not_found",
+            "operational_control": "found",
+            "institutional_actors": "not_found",
+            "finance": "found",
+            "technology_equipment": "found",
+            "logistics": "found",
+            "communications": "found",
+            "proxy_geography": "not_found",
+            "human_operators": "not_found",
+            "doctrine_tactics": "found",
+            "limiting_evidence": "found"
+          },
+          "route_mode": "entity_context_analysis",
+          "task_family": "financial",
+          "warnings": [
+            "Second-pass retrieval added evidence for missing entity-context types."
+          ],
+          "reasoning_engine_label": "Gemini 2.5 Flash",
+          "reasoning_engine_surface": "cloud",
+          "reasoning_outcome": "deterministic-fallback",
+          "reasoning_failure_kind": "offline",
+          "supported_claim_rate": 0.625,
+          "citation_status": "unsupported",
+          "run_id": "fcf_r3_4b7d5fcc",
+          "case_id": "live_scope_2f1bc9ee",
+          "answer_id": "live_answer_f5972568",
+          "persistence_status": "verified"
+        }
+      },
+      "quality": {
+        "score": 7,
+        "maxScore": 7,
+        "directCommandOrControl": true,
+        "directCommunication": true,
+        "financeDirectness": true,
+        "tikaCaution": true,
+        "sadatAsEei": true,
+        "citationsOrEvidenceIds": true,
+        "bottomLine": true,
+        "notes": []
+      }
+    },
+    {
+      "runId": "tevel_architecture-2-1777535444630",
+      "mode": "tevel_architecture",
+      "iteration": 2,
+      "query": "Find all entity-contexts for Turkey in this corpus. Cover command/control, explicit Turkish agencies, Hamas-Turkey communications, finance, technology/equipment, logistics, proxy geography, human operators, communications, doctrine/tactics, TIKA indicators, SADAT/EEI, and limiting or alternative-actor evidence. Start with synthesis, cite evidence IDs, distinguish confirmed facts from indirect indicators and hypotheses, and state what it means.",
+      "startedAt": "2026-04-30T07:50:44.630Z",
+      "durationMs": 435,
+      "success": true,
+      "skipped": false,
+      "answer": "FCF-R3 status: current-supported\nExecutive synthesis:\nCoverage validation found broad coverage of selected evidence contexts: Finance, Operational control, Doctrine / tactics, Technology / equipment, Communications, Boundary / alternative actor, Logistics.\nCoverage checklist: no strong evidence was found for Strategic command, Institutional actors, Proxy / geography, Human operators.\nCore meaning: the entity functions as a command/control axis, finance node, communications coordination node, technology/equipment axis, proxy/geography context in the case. This is supported by diverse direct clusters, led by Finance: crypto wallet TR-884 / Gaza logistics cell. [fcf_insight_8_881bcd17] [fcf_insight_5_e860d86f] [fcf_insight_4_13ec837e]\nEvidence clusters and interpretation:\n1. Finance: crypto wallet TR-884 / Gaza logistics cell (status=confirmed_direct; confidence=high): The document states / supports: Finance: crypto wallet TR-884 / Gaza logistics cell: Direct transaction record links crypto wallet TR-884, registered to a Turkish operator, with two transfers to the Gaza logistics cell. [fcf_insight_8_881bcd17]\n2. Operational control: Hamas external liaison / Istanbul (status=confirmed_direct; confidence=high): The document states / supports: Operational control: Hamas external liaison / Istanbul: MIT handler in Ankara approved the Istanbul meeting agenda for the Hamas external liaison. [fcf_insight_5_e860d86f]\n3. Doctrine / tactics: Turkey / Turkish (status=confirmed_direct; confidence=medium): The document states / supports: Doctrine / tactics: Turkey / Turkish: A tactics memo describes compartmented courier doctrine copied from a Turkish-language manual, but it does not identify the authoring organization. [fcf_insight_4_13ec837e]\n4. Communications: Hamas external liaison / Istanbul (status=confirmed_direct; confidence=high): The document states / supports: Communications: Hamas external liaison / Istanbul: Hamas external liaison sent a direct Telegram update to a Turkish contact after the Istanbul meeting. [fcf_insight_6_a7384597]\n5. Technology / equipment: Turkey / Turkish (status=confirmed_direct; confidence=high): The document states / supports: Technology / equipment: Turkey / Turkish: Procurement list mentions Turkish-made Baykar drone batteries and RF modules routed through a civilian equipment vendor. [fcf_insight_0_b6ca95cf]\n6. Logistics: Gaza logistics cell / Istanbul (status=confirmed_direct; confidence=medium): The document states / supports: Logistics: Gaza logistics cell / Istanbul: The logistics map connects Istanbul, northern Sinai, and Gaza as proxy geography for non-military cargo movement. [fcf_insight_2_9d53f97d]\n7. Operational control: Gaza logistics cell / TIKA (status=indirect_indicator; confidence=low): Possible indication: Operational control: Gaza logistics cell / TIKA: Photos from a foreign-funded farm compound show a TIKA logo near storage sheds later used by the Gaza logistics cell; the source does not prove TIKA financed or controlled the site. [fcf_insight_1_04f19005]\nConfidence level:\nmedium-high. Selected 9 evidence atoms from 10 candidates across 9 clusters.\nCitations:\n- The document states / supports: Direct transaction record links crypto wallet TR-884, registered to a Turkish operator, with two transfers to the Gaza logistics cell. [fcf_insight_8_881bcd17]\n- The document states / supports: MIT handler in Ankara approved the Istanbul meeting agenda for the Hamas external liaison. [fcf_insight_5_e860d86f]\n- The document states / supports: A tactics memo describes compartmented courier doctrine copied from a Turkish-language manual, but it does not identify the authoring organization. [fcf_insight_4_13ec837e]\n- The document states / supports: Procurement list mentions Turkish-made Baykar drone batteries and RF modules routed through a civilian equipment vendor. [fcf_insight_0_b6ca95cf]\n- Possible indication: Photos from a foreign-funded farm compound show a TIKA logo near storage sheds later used by the Gaza logistics cell; the source does not prove TIKA financed or controlled the site. [fcf_insight_1_04f19005]\n- The document states / supports: Hamas external liaison sent a direct Telegram update to a Turkish contact after the Istanbul meeting. [fcf_insight_6_a7384597]\n- Boundary of involvement / alternative actor: Weapons procurement was not conducted by the Turkish contact; a separate Hebron broker handled that channel. [fcf_insight_7_534c7bf7]\n- The document states / supports: The logistics map connects Istanbul, northern Sinai, and Gaza as proxy geography for non-military cargo movement. [fcf_insight_2_9d53f97d]\n\nBoundaries / alternative actors:\n- Boundary of involvement / alternative actor: Boundary / alternative actor: Turkey / Turkish: Weapons procurement was not conducted by the Turkish contact; a separate Hebron broker handled that channel. [fcf_insight_7_534c7bf7] This does not prove direct involvement by the queried entity; it clarifies the boundary of involvement.\n\nValidation gaps / EEIs:\n- status=hypothesis_eei; confidence=low: Doctrine / tactics: Gaza logistics cell / SADAT: EEI: Determine whether SADAT personnel provided doctrine or training support to the Gaza logistics cell; no direct source span confirms this involvement. [fcf_insight_3_8bf58502]\n\nLimits:\n- Second-pass retrieval added evidence for missing entity-context types.\nBottom-line assessment:\nCore meaning: the entity functions as a command/control axis, finance node, communications coordination node, technology/equipment axis, proxy/geography context in the case. That means the entity should be treated as a connecting or coordination role in the case, not merely as a name match. Hypotheses or EEIs remain collection requirements, not confirmed facts. [fcf_insight_8_881bcd17] [fcf_insight_5_e860d86f] [fcf_insight_4_13ec837e]\n\nThe cloud reasoning engine was unavailable, so this deterministic FCF-R3 answer was assembled from selected evidence.",
+      "tokens": null,
+      "technical": {
+        "contextMode": "askLiveResearchQuestion",
+        "citationGuard": "active",
+        "verificationNote": "Citation verification: unsupported (63% supported claims).",
+        "warnings": [
+          "Citation-ready retrieval artifacts are unavailable for the selected scope.",
+          "Second-pass retrieval added evidence for missing entity-context types.",
+          "Comms offline: unable to reach the cloud reasoning engine."
+        ],
+        "scope": {
+          "totalStudies": 4,
+          "scopedStudies": 4,
+          "selectedStudies": 4,
+          "totalEntities": 11,
+          "totalRelations": 7,
+          "citationReadyStudies": 0,
+          "watchlistHits": 0,
+          "retrievalBundles": 0,
+          "retrievalHits": 0
+        },
+        "engineTrace": {
+          "engineId": "gemini-cloud",
+          "engineLabel": "Gemini 2.5 Flash",
+          "engineSurface": "cloud",
+          "responseMode": "deterministic-fallback",
+          "failureKind": "offline",
+          "failureMessage": "Comms offline: unable to reach the cloud reasoning engine."
+        },
+        "fcfAudit": {
+          "answer_status": "current-supported",
+          "candidate_count": 10,
+          "pruned_count": 15,
+          "selected_count": 9,
+          "cluster_count": 9,
+          "direct_evidence_count": 7,
+          "weak_evidence_count": 0,
+          "context_chars": 2691,
+          "estimated_input_tokens": 673,
+          "selected_evidence_ids": [
+            "fcf_insight_8_881bcd17",
+            "fcf_insight_5_e860d86f",
+            "fcf_insight_4_13ec837e",
+            "fcf_insight_0_b6ca95cf",
+            "fcf_insight_1_04f19005",
+            "fcf_insight_3_8bf58502",
+            "fcf_insight_6_a7384597",
+            "fcf_insight_7_534c7bf7",
+            "fcf_insight_2_9d53f97d"
+          ],
+          "found_context_types": [
+            "finance",
+            "operational_control",
+            "doctrine_tactics",
+            "technology_equipment",
+            "communications",
+            "limiting_evidence",
+            "logistics"
+          ],
+          "missing_context_types": [],
+          "context_coverage_score": 1,
+          "coverage_complete": true,
+          "second_pass_retrieval": true,
+          "coverage_checklist": {
+            "strategic_command": "not_found",
+            "operational_control": "found",
+            "institutional_actors": "not_found",
+            "finance": "found",
+            "technology_equipment": "found",
+            "logistics": "found",
+            "communications": "found",
+            "proxy_geography": "not_found",
+            "human_operators": "not_found",
+            "doctrine_tactics": "found",
+            "limiting_evidence": "found"
+          },
+          "route_mode": "entity_context_analysis",
+          "task_family": "financial",
+          "warnings": [
+            "Second-pass retrieval added evidence for missing entity-context types."
+          ],
+          "reasoning_engine_label": "Gemini 2.5 Flash",
+          "reasoning_engine_surface": "cloud",
+          "reasoning_outcome": "deterministic-fallback",
+          "reasoning_failure_kind": "offline",
+          "supported_claim_rate": 0.625,
+          "citation_status": "unsupported",
+          "run_id": "fcf_r3_ddc58631",
+          "case_id": "live_scope_2f1bc9ee",
+          "answer_id": "live_answer_b33c3652",
+          "persistence_status": "verified"
+        }
+      },
+      "quality": {
+        "score": 7,
+        "maxScore": 7,
+        "directCommandOrControl": true,
+        "directCommunication": true,
+        "financeDirectness": true,
+        "tikaCaution": true,
+        "sadatAsEei": true,
+        "citationsOrEvidenceIds": true,
+        "bottomLine": true,
+        "notes": []
+      }
+    },
+    {
+      "runId": "tevel_architecture-3-1777535445066",
+      "mode": "tevel_architecture",
+      "iteration": 3,
+      "query": "Find all entity-contexts for Turkey in this corpus. Cover command/control, explicit Turkish agencies, Hamas-Turkey communications, finance, technology/equipment, logistics, proxy geography, human operators, communications, doctrine/tactics, TIKA indicators, SADAT/EEI, and limiting or alternative-actor evidence. Start with synthesis, cite evidence IDs, distinguish confirmed facts from indirect indicators and hypotheses, and state what it means.",
+      "startedAt": "2026-04-30T07:50:45.066Z",
+      "durationMs": 449,
+      "success": true,
+      "skipped": false,
+      "answer": "FCF-R3 status: current-supported\nExecutive synthesis:\nCoverage validation found broad coverage of selected evidence contexts: Finance, Operational control, Doctrine / tactics, Technology / equipment, Communications, Boundary / alternative actor, Logistics.\nCoverage checklist: no strong evidence was found for Strategic command, Institutional actors, Proxy / geography, Human operators.\nCore meaning: the entity functions as a command/control axis, finance node, communications coordination node, technology/equipment axis, proxy/geography context in the case. This is supported by diverse direct clusters, led by Finance: crypto wallet TR-884 / Gaza logistics cell. [fcf_insight_8_881bcd17] [fcf_insight_5_e860d86f] [fcf_insight_4_13ec837e]\nEvidence clusters and interpretation:\n1. Finance: crypto wallet TR-884 / Gaza logistics cell (status=confirmed_direct; confidence=high): The document states / supports: Finance: crypto wallet TR-884 / Gaza logistics cell: Direct transaction record links crypto wallet TR-884, registered to a Turkish operator, with two transfers to the Gaza logistics cell. [fcf_insight_8_881bcd17]\n2. Operational control: Hamas external liaison / Istanbul (status=confirmed_direct; confidence=high): The document states / supports: Operational control: Hamas external liaison / Istanbul: MIT handler in Ankara approved the Istanbul meeting agenda for the Hamas external liaison. [fcf_insight_5_e860d86f]\n3. Doctrine / tactics: Turkey / Turkish (status=confirmed_direct; confidence=medium): The document states / supports: Doctrine / tactics: Turkey / Turkish: A tactics memo describes compartmented courier doctrine copied from a Turkish-language manual, but it does not identify the authoring organization. [fcf_insight_4_13ec837e]\n4. Communications: Hamas external liaison / Istanbul (status=confirmed_direct; confidence=high): The document states / supports: Communications: Hamas external liaison / Istanbul: Hamas external liaison sent a direct Telegram update to a Turkish contact after the Istanbul meeting. [fcf_insight_6_a7384597]\n5. Technology / equipment: Turkey / Turkish (status=confirmed_direct; confidence=high): The document states / supports: Technology / equipment: Turkey / Turkish: Procurement list mentions Turkish-made Baykar drone batteries and RF modules routed through a civilian equipment vendor. [fcf_insight_0_b6ca95cf]\n6. Logistics: Gaza logistics cell / Istanbul (status=confirmed_direct; confidence=medium): The document states / supports: Logistics: Gaza logistics cell / Istanbul: The logistics map connects Istanbul, northern Sinai, and Gaza as proxy geography for non-military cargo movement. [fcf_insight_2_9d53f97d]\n7. Operational control: Gaza logistics cell / TIKA (status=indirect_indicator; confidence=low): Possible indication: Operational control: Gaza logistics cell / TIKA: Photos from a foreign-funded farm compound show a TIKA logo near storage sheds later used by the Gaza logistics cell; the source does not prove TIKA financed or controlled the site. [fcf_insight_1_04f19005]\nConfidence level:\nmedium-high. Selected 9 evidence atoms from 10 candidates across 9 clusters.\nCitations:\n- The document states / supports: Direct transaction record links crypto wallet TR-884, registered to a Turkish operator, with two transfers to the Gaza logistics cell. [fcf_insight_8_881bcd17]\n- The document states / supports: MIT handler in Ankara approved the Istanbul meeting agenda for the Hamas external liaison. [fcf_insight_5_e860d86f]\n- The document states / supports: A tactics memo describes compartmented courier doctrine copied from a Turkish-language manual, but it does not identify the authoring organization. [fcf_insight_4_13ec837e]\n- The document states / supports: Procurement list mentions Turkish-made Baykar drone batteries and RF modules routed through a civilian equipment vendor. [fcf_insight_0_b6ca95cf]\n- Possible indication: Photos from a foreign-funded farm compound show a TIKA logo near storage sheds later used by the Gaza logistics cell; the source does not prove TIKA financed or controlled the site. [fcf_insight_1_04f19005]\n- The document states / supports: Hamas external liaison sent a direct Telegram update to a Turkish contact after the Istanbul meeting. [fcf_insight_6_a7384597]\n- Boundary of involvement / alternative actor: Weapons procurement was not conducted by the Turkish contact; a separate Hebron broker handled that channel. [fcf_insight_7_534c7bf7]\n- The document states / supports: The logistics map connects Istanbul, northern Sinai, and Gaza as proxy geography for non-military cargo movement. [fcf_insight_2_9d53f97d]\n\nBoundaries / alternative actors:\n- Boundary of involvement / alternative actor: Boundary / alternative actor: Turkey / Turkish: Weapons procurement was not conducted by the Turkish contact; a separate Hebron broker handled that channel. [fcf_insight_7_534c7bf7] This does not prove direct involvement by the queried entity; it clarifies the boundary of involvement.\n\nValidation gaps / EEIs:\n- status=hypothesis_eei; confidence=low: Doctrine / tactics: Gaza logistics cell / SADAT: EEI: Determine whether SADAT personnel provided doctrine or training support to the Gaza logistics cell; no direct source span confirms this involvement. [fcf_insight_3_8bf58502]\n\nLimits:\n- Second-pass retrieval added evidence for missing entity-context types.\nBottom-line assessment:\nCore meaning: the entity functions as a command/control axis, finance node, communications coordination node, technology/equipment axis, proxy/geography context in the case. That means the entity should be treated as a connecting or coordination role in the case, not merely as a name match. Hypotheses or EEIs remain collection requirements, not confirmed facts. [fcf_insight_8_881bcd17] [fcf_insight_5_e860d86f] [fcf_insight_4_13ec837e]\n\nThe cloud reasoning engine was unavailable, so this deterministic FCF-R3 answer was assembled from selected evidence.",
+      "tokens": null,
+      "technical": {
+        "contextMode": "askLiveResearchQuestion",
+        "citationGuard": "active",
+        "verificationNote": "Citation verification: unsupported (63% supported claims).",
+        "warnings": [
+          "Citation-ready retrieval artifacts are unavailable for the selected scope.",
+          "Second-pass retrieval added evidence for missing entity-context types.",
+          "Comms offline: unable to reach the cloud reasoning engine."
+        ],
+        "scope": {
+          "totalStudies": 4,
+          "scopedStudies": 4,
+          "selectedStudies": 4,
+          "totalEntities": 11,
+          "totalRelations": 7,
+          "citationReadyStudies": 0,
+          "watchlistHits": 0,
+          "retrievalBundles": 0,
+          "retrievalHits": 0
+        },
+        "engineTrace": {
+          "engineId": "gemini-cloud",
+          "engineLabel": "Gemini 2.5 Flash",
+          "engineSurface": "cloud",
+          "responseMode": "deterministic-fallback",
+          "failureKind": "offline",
+          "failureMessage": "Comms offline: unable to reach the cloud reasoning engine."
+        },
+        "fcfAudit": {
+          "answer_status": "current-supported",
+          "candidate_count": 10,
+          "pruned_count": 15,
+          "selected_count": 9,
+          "cluster_count": 9,
+          "direct_evidence_count": 7,
+          "weak_evidence_count": 0,
+          "context_chars": 2691,
+          "estimated_input_tokens": 673,
+          "selected_evidence_ids": [
+            "fcf_insight_8_881bcd17",
+            "fcf_insight_5_e860d86f",
+            "fcf_insight_4_13ec837e",
+            "fcf_insight_0_b6ca95cf",
+            "fcf_insight_1_04f19005",
+            "fcf_insight_3_8bf58502",
+            "fcf_insight_6_a7384597",
+            "fcf_insight_7_534c7bf7",
+            "fcf_insight_2_9d53f97d"
+          ],
+          "found_context_types": [
+            "finance",
+            "operational_control",
+            "doctrine_tactics",
+            "technology_equipment",
+            "communications",
+            "limiting_evidence",
+            "logistics"
+          ],
+          "missing_context_types": [],
+          "context_coverage_score": 1,
+          "coverage_complete": true,
+          "second_pass_retrieval": true,
+          "coverage_checklist": {
+            "strategic_command": "not_found",
+            "operational_control": "found",
+            "institutional_actors": "not_found",
+            "finance": "found",
+            "technology_equipment": "found",
+            "logistics": "found",
+            "communications": "found",
+            "proxy_geography": "not_found",
+            "human_operators": "not_found",
+            "doctrine_tactics": "found",
+            "limiting_evidence": "found"
+          },
+          "route_mode": "entity_context_analysis",
+          "task_family": "financial",
+          "warnings": [
+            "Second-pass retrieval added evidence for missing entity-context types."
+          ],
+          "reasoning_engine_label": "Gemini 2.5 Flash",
+          "reasoning_engine_surface": "cloud",
+          "reasoning_outcome": "deterministic-fallback",
+          "reasoning_failure_kind": "offline",
+          "supported_claim_rate": 0.625,
+          "citation_status": "unsupported",
+          "run_id": "fcf_r3_6d6c69b8",
+          "case_id": "live_scope_2f1bc9ee",
+          "answer_id": "live_answer_b5c27982",
+          "persistence_status": "verified"
+        }
+      },
+      "quality": {
+        "score": 7,
+        "maxScore": 7,
+        "directCommandOrControl": true,
+        "directCommunication": true,
+        "financeDirectness": true,
+        "tikaCaution": true,
+        "sadatAsEei": true,
+        "citationsOrEvidenceIds": true,
+        "bottomLine": true,
+        "notes": []
+      }
+    }
+  ]
+}

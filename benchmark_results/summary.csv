@@ -1,0 +1,10 @@
+mode,iteration,success,skipped,duration_ms,quality_score,quality_max,prompt_tokens,candidate_tokens,total_tokens,error
+gemini_with_fcf,1,true,false,13971,6,7,1003,1410,3809,
+gemini_with_fcf,2,false,false,412,0,7,,,,"Gemini HTTP 400: {""error"":{""code"":400,""message"":""Invalid JSON payload received. Unknown name \""systemInstruction\"": Cannot find field."",""status"":""INVALID_ARGUMENT"",""details"":[{""@type"":""type.googleapis.com/google.rpc.BadRequest"",""fieldViolations"":[{""description"":""Invalid JSON payload received. Unknown name \""systemInstruction\"": Cannot find field.""}]}]}}"
+gemini_with_fcf,3,false,false,393,0,7,,,,"Gemini HTTP 400: {""error"":{""code"":400,""message"":""Invalid JSON payload received. Unknown name \""systemInstruction\"": Cannot find field."",""status"":""INVALID_ARGUMENT"",""details"":[{""@type"":""type.googleapis.com/google.rpc.BadRequest"",""fieldViolations"":[{""description"":""Invalid JSON payload received. Unknown name \""systemInstruction\"": Cannot find field.""}]}]}}"
+gemini_without_fcf,1,false,false,398,0,7,,,,"Gemini HTTP 400: {""error"":{""code"":400,""message"":""Invalid JSON payload received. Unknown name \""systemInstruction\"": Cannot find field."",""status"":""INVALID_ARGUMENT"",""details"":[{""@type"":""type.googleapis.com/google.rpc.BadRequest"",""fieldViolations"":[{""description"":""Invalid JSON payload received. Unknown name \""systemInstruction\"": Cannot find field.""}]}]}}"
+gemini_without_fcf,2,false,false,455,0,7,,,,"Gemini HTTP 400: {""error"":{""code"":400,""message"":""Invalid JSON payload received. Unknown name \""systemInstruction\"": Cannot find field."",""status"":""INVALID_ARGUMENT"",""details"":[{""@type"":""type.googleapis.com/google.rpc.BadRequest"",""fieldViolations"":[{""description"":""Invalid JSON payload received. Unknown name \""systemInstruction\"": Cannot find field.""}]}]}}"
+gemini_without_fcf,3,true,false,18196,6,7,871,1306,4856,
+tevel_architecture,1,true,false,550,7,7,,,,
+tevel_architecture,2,true,false,435,7,7,,,,
+tevel_architecture,3,true,false,449,7,7,,,,

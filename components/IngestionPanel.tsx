@@ -45,11 +45,16 @@ import {
 } from 'lucide-react';
 import { RawMedia } from '../types';
 import { parseUploadedFileWithSidecar } from '../services/sidecarClient';
+import { composeIngestionAnalysisBody, IngestionArtifactContext } from '../services/ingestionContent';
+import { RESEARCH_PROFILE_OPTIONS } from '../services/researchProfiles';
+import type { ResearchProfileSelection } from '../services/researchProfiles';
 
 interface IngestionPanelProps {
   onAnalyze: (text: string, title: string, media: RawMedia[]) => void | Promise<void>;
   isAnalyzing: boolean;
   onCancel: () => void;
+  researchProfileId: ResearchProfileSelection;
+  onResearchProfileChange: (value: ResearchProfileSelection) => void;
 }
 
 type Step = 1 | 2 | 3;
@@ -178,7 +183,19 @@ const extractPreviewSignals = (text: string): string[] => {
   return Array.from(candidates).slice(0, 8);
 };
 
-const IngestionPanel: React.FC<IngestionPanelProps> = ({ onAnalyze, isAnalyzing, onCancel }) => {
+const resetFileInputValue = (input: HTMLInputElement | null) => {
+  if (input) {
+    input.value = '';
+  }
+};
+
+const IngestionPanel: React.FC<IngestionPanelProps> = ({
+  onAnalyze,
+  isAnalyzing,
+  onCancel,
+  researchProfileId,
+  onResearchProfileChange,
+}) => {
   const [currentStep, setCurrentStep] = useState<Step>(1);
   const [isDragActive, setIsDragActive] = useState(false);
   
@@ -206,8 +223,7 @@ const IngestionPanel: React.FC<IngestionPanelProps> = ({ onAnalyze, isAnalyzing,
 
   // STORE ACTUAL MEDIA OBJECTS
   const [uploadedMedia, setUploadedMedia] = useState<RawMedia[]>([]);
-  const fullAnalysisContentRef = useRef('');
-  const contentMetricsRef = useRef<{ estimatedTokens: number }>({ estimatedTokens: 0 });
+  const [artifactContexts, setArtifactContexts] = useState<IngestionArtifactContext[]>([]);
 
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
   
@@ -232,9 +248,8 @@ const IngestionPanel: React.FC<IngestionPanelProps> = ({ onAnalyze, isAnalyzing,
     e.preventDefault();
     e.stopPropagation();
     setIsDragActive(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      const file = e.dataTransfer.files[0];
-      handleFileSelect(file);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      void handleFilesSelected(e.dataTransfer.files);
     }
   };
 
@@ -253,9 +268,17 @@ const IngestionPanel: React.FC<IngestionPanelProps> = ({ onAnalyze, isAnalyzing,
       const extracted = await readFileContent(file);
       const extractedContent = extracted.text;
       const previewContent = extractedContent ? extractedContent.slice(0, 2000) : "Preview of uploaded file content unavailable.";
+      const artifactId = `media_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const attachmentHeader = `[SYSTEM ATTACHMENT]\nFILENAME: ${file.name}\nTYPE: ${type.toUpperCase()}\nMETADATA: ${file.size} bytes`;
+      const previewText = extractedContent
+        ? buildPreviewAttachmentText(attachmentHeader, extractedContent)
+        : `${attachmentHeader}\nNOTE: Full text extraction is not yet available for this file format in the browser intake path.`;
+      const analysisText = extractedContent
+        ? `${attachmentHeader}\n[EXTRACTED_TEXT_START]\n${extractedContent}\n[EXTRACTED_TEXT_END]`
+        : `${attachmentHeader}\nNOTE: Full text extraction is not yet available for this file format in the browser intake path.`;
 
       const newMedia: RawMedia = {
-          id: `media_${Date.now()}`,
+          id: artifactId,
           type: type,
           title: file.name,
           date: new Date().toLocaleTimeString(),
@@ -271,31 +294,30 @@ const IngestionPanel: React.FC<IngestionPanelProps> = ({ onAnalyze, isAnalyzing,
       };
 
       setUploadedMedia(prev => [...prev, newMedia]);
-      
-      // 4. Update Text input to reflect file presence (for AI Context)
-      setRawContent(prev => {
-          const prefix = prev ? prev + "\n\n" : "";
-          const attachmentHeader = `[SYSTEM ATTACHMENT]\nFILENAME: ${file.name}\nTYPE: ${type.toUpperCase()}\nMETADATA: ${file.size} bytes`;
-          const fullAttachment = extractedContent
-            ? `${attachmentHeader}\n[EXTRACTED_TEXT_START]\n${extractedContent}\n[EXTRACTED_TEXT_END]`
-            : `${attachmentHeader}\nNOTE: Full text extraction is not yet available for this file format in the browser intake path.`;
-          const nextFullContent = `${fullAnalysisContentRef.current ? fullAnalysisContentRef.current + "\n\n" : ""}${fullAttachment}`;
-          fullAnalysisContentRef.current = nextFullContent;
-          contentMetricsRef.current = getResponsiveContentMetrics(nextFullContent);
 
-          if (extractedContent) {
-            return `${prefix}${buildPreviewAttachmentText(attachmentHeader, extractedContent)}`;
+      setArtifactContexts(prev => [
+          ...prev,
+          {
+              id: artifactId,
+              previewText,
+              analysisText,
           }
+      ]);
+  };
 
-          return `${prefix}${attachmentHeader}\nNOTE: Full text extraction is not yet available for this file format in the browser intake path.`;
-      });
+  const handleFilesSelected = async (files: FileList | File[]) => {
+      for (const file of Array.from(files)) {
+          await handleFileSelect(file);
+      }
   };
 
   const handleAddLink = () => {
       if (!linkInput.trim()) return;
-      
+      const artifactId = `link_${Date.now()}`;
+      const analysisText = `[EXTERNAL LINK]\nURL: ${linkInput}`;
+
       const newMedia: RawMedia = {
-          id: `link_${Date.now()}`,
+          id: artifactId,
           type: 'text', // Treat as text source
           title: linkInput,
           date: new Date().toLocaleTimeString(),
@@ -304,23 +326,26 @@ const IngestionPanel: React.FC<IngestionPanelProps> = ({ onAnalyze, isAnalyzing,
       };
 
       setUploadedMedia(prev => [...prev, newMedia]);
-      setRawContent(prev => {
-          const prefix = prev ? prev + "\n\n" : "";
-          const previewAppended = prefix + `[EXTERNAL LINK]\nURL: ${linkInput}`;
-          const fullAppended = `${fullAnalysisContentRef.current ? fullAnalysisContentRef.current + "\n\n" : ""}[EXTERNAL LINK]\nURL: ${linkInput}`;
-          fullAnalysisContentRef.current = fullAppended;
-          contentMetricsRef.current = getResponsiveContentMetrics(fullAppended);
-          return previewAppended;
-      });
+      setArtifactContexts(prev => [
+          ...prev,
+          {
+              id: artifactId,
+              previewText: analysisText,
+              analysisText,
+          }
+      ]);
       setLinkInput('');
   };
 
   const clearInput = () => {
       setRawContent('');
-      fullAnalysisContentRef.current = '';
-      contentMetricsRef.current = { estimatedTokens: 0 };
       setUploadedMedia([]);
+      setArtifactContexts([]);
       setTitle('');
+      resetFileInputValue(textInputRef.current);
+      resetFileInputValue(imageInputRef.current);
+      resetFileInputValue(videoInputRef.current);
+      resetFileInputValue(audioInputRef.current);
   };
 
   // --- TAGGING HANDLERS ---
@@ -348,6 +373,7 @@ const IngestionPanel: React.FC<IngestionPanelProps> = ({ onAnalyze, isAnalyzing,
       const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
       setTimestamp(time);
       setUploadedMedia([]); // Clear previous
+      setArtifactContexts([]);
       
       if (type === 'RED_SEA') {
           setTitle(`Maritime Incident #${Math.floor(Math.random()*1000)}`);
@@ -360,8 +386,6 @@ Radar signature confirmed activation of anti-ship missile battery at grid 44R.
 Simultaneous telemetry link detected from IRGC spy ship 'Behshad' (Stationary in Red Sea).
 Drone Swarm (Samad-3) launched from inland launch site towards Eilat as diversion.`;
           setRawContent(scenarioText);
-          fullAnalysisContentRef.current = scenarioText;
-          contentMetricsRef.current = getResponsiveContentMetrics(scenarioText);
           setClassification('TOP SECRET');
           setSourceType('SIGINT');
           setReliability('A');
@@ -378,8 +402,6 @@ Attackers deployed ransomware encrypting patient DB.
 Ransom Note demands payment to Wallet 0x4a...9f.
 Traffic analysis shows C2 (Command & Control) server located in Tehran.`;
           setRawContent(scenarioText);
-          fullAnalysisContentRef.current = scenarioText;
-          contentMetricsRef.current = getResponsiveContentMetrics(scenarioText);
           setClassification('SECRET');
           setSourceType('CYBER');
           setReliability('B');
@@ -396,8 +418,6 @@ Subject admits to transporting M4 Carbine parts concealed in agricultural fertil
 Funding provided by 'The Accountant' in Jenin (linked to Islamic Jihad).
 Weapon destination: Jenin Battalion storage facilities.`;
           setRawContent(scenarioText);
-          fullAnalysisContentRef.current = scenarioText;
-          contentMetricsRef.current = getResponsiveContentMetrics(scenarioText);
           setClassification('CONFIDENTIAL');
           setSourceType('HUMINT');
           setReliability('C');
@@ -414,15 +434,13 @@ Weapon destination: Jenin Battalion storage facilities.`;
 
   const handleNext = () => { if (currentStep < 3) setCurrentStep(prev => (prev + 1) as Step); };
   const handleBack = () => { if (currentStep > 1) setCurrentStep(prev => (prev - 1) as Step); };
+  const handleRawContentChange = (nextContent: string) => { setRawContent(nextContent); };
 
-  const handleRawContentChange = (nextContent: string) => {
-      setRawContent(nextContent);
-      fullAnalysisContentRef.current = nextContent;
-      contentMetricsRef.current = getResponsiveContentMetrics(nextContent);
-  };
+  const combinedAnalysisBody = composeIngestionAnalysisBody(rawContent, artifactContexts);
+  const contentMetrics = getResponsiveContentMetrics(combinedAnalysisBody);
 
   const handleFinalSubmit = async () => {
-      const analysisBody = fullAnalysisContentRef.current || rawContent;
+      const analysisBody = combinedAnalysisBody;
       // Prepend metadata to the content so the AI considers it
       const enrichedContent = `
 [METADATA_START]
@@ -451,20 +469,21 @@ ${analysisBody}
   useEffect(() => {
     if (isAnalyzing) {
         setLogLines([]);
-        const visibleAnalysisText = fullAnalysisContentRef.current || rawContent;
+        const visibleAnalysisText = combinedAnalysisBody;
         const previewSignals = extractPreviewSignals(visibleAnalysisText.slice(0, PREVIEW_SIGNAL_LIMIT));
         const messages = [
+            `RESEARCH PROFILE: ${researchProfileId === 'AUTO' ? 'AUTO-DETECT' : researchProfileId}`,
             `SOURCE PROFILE: ${sourceType} // ${classification}`,
             title ? `CASE TITLE: ${title}` : "CASE TITLE: Untitled ingestion",
             location ? `LOCATION ANCHOR: ${location}` : "LOCATION ANCHOR: none supplied",
             tags.length ? `TAGGED LEADS: ${tags.slice(0, 5).join(", ")}` : "TAGGED LEADS: scanning for unnamed leads",
             uploadedMedia.length ? `MEDIA OBJECTS QUEUED: ${uploadedMedia.length}` : "MEDIA OBJECTS QUEUED: text-only ingest",
-            `TEXT FOOTPRINT: ~${contentMetricsRef.current.estimatedTokens} tokens under review`,
+            `TEXT FOOTPRINT: ~${contentMetrics.estimatedTokens} tokens under review`,
             ...(previewSignals.length ? previewSignals.map((signal) => `SURFACED SIGNAL: ${signal}`) : ["SURFACED SIGNAL: extracting dates, actors, assets, and locations..."]),
             ...(runFaceScan ? ["BIOMETRIC MODE: facial scan requested"] : []),
             ...(runVoiceScan ? ["BIOMETRIC MODE: voice scan requested"] : []),
-            "MAPPING entities, timeline anchors, and explicit links...",
-            "Packaging structured intelligence for analyst review...",
+            "MAPPING domain entities, timeline anchors, and explicit links...",
+            "Packaging structured research output for review...",
         ];
         
         let delay = 0;
@@ -475,7 +494,7 @@ ${analysisBody}
             delay += i < 6 ? 300 : 420;
         });
     }
-  }, [classification, isAnalyzing, location, rawContent, runFaceScan, runVoiceScan, sourceType, tags, title, uploadedMedia.length]);
+  }, [classification, combinedAnalysisBody, contentMetrics.estimatedTokens, isAnalyzing, location, researchProfileId, runFaceScan, runVoiceScan, sourceType, tags, title, uploadedMedia.length]);
 
   return (
     <div 
@@ -501,7 +520,7 @@ ${analysisBody}
                    
                    <h2 className="text-center text-white font-bold text-xl mb-6 tracking-widest flex items-center justify-center gap-3">
                        <Activity className="animate-spin text-emerald-500" size={20} />
-                       PROCESSING INTELLIGENCE
+                       PROCESSING RESEARCH
                    </h2>
 
                    <div className="space-y-2 font-mono text-xs border border-slate-800 bg-black/50 p-4 rounded h-48 overflow-y-auto scrollbar-none shadow-inner">
@@ -520,7 +539,7 @@ ${analysisBody}
       {isDragActive && (
           <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm border-4 border-dashed border-[#05DF9C] m-8 rounded-3xl flex flex-col items-center justify-center animate-pulse">
               <UploadCloud size={80} className="text-[#05DF9C] mb-6" />
-              <h2 className="text-3xl font-bold text-white tracking-widest">DROP INTELLIGENCE FILE HERE</h2>
+              <h2 className="text-3xl font-bold text-white tracking-widest">DROP RESEARCH FILE HERE</h2>
               <p className="text-[#05DF9C] font-mono mt-4 text-sm bg-[#05DF9C]/10 px-4 py-2 rounded border border-[#05DF9C]/20">IMAGES • VIDEOS • AUDIO • LOGS • TEXT</p>
           </div>
       )}
@@ -575,6 +594,22 @@ ${analysisBody}
               </div>
             );
           })}
+        </div>
+
+        <div className="flex items-center gap-3">
+          <div className="text-[10px] uppercase tracking-widest text-slate-400">Research profile</div>
+          <select
+            className="bg-black/40 border border-slate-700/60 text-slate-100 text-xs rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-400/40"
+            value={researchProfileId}
+            onChange={(event) => onResearchProfileChange(event.target.value as ResearchProfileSelection)}
+            disabled={isAnalyzing}
+          >
+            {RESEARCH_PROFILE_OPTIONS.map((profile) => (
+              <option key={profile.id} value={profile.id}>
+                {profile.label}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 
@@ -650,22 +685,22 @@ ${analysisBody}
 
                                     {/* Media Upload Buttons */}
                                     <div className="flex gap-2">
-                                        <input type="file" ref={textInputRef} accept=".txt,.pdf,.md,.doc,.docx,.log,.json,.csv" className="hidden" onChange={(e) => e.target.files && handleFileSelect(e.target.files[0])} />
+                                        <input type="file" ref={textInputRef} multiple accept=".txt,.pdf,.md,.doc,.docx,.log,.json,.csv" className="hidden" onChange={(e) => { const files = e.target.files; if (files?.length) { void handleFilesSelected(files); } e.currentTarget.value = ''; }} />
                                         <button onClick={() => textInputRef.current?.click()} className="flex items-center gap-2 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[10px] font-bold uppercase transition-colors">
                                             <FileText size={14} className="text-slate-400" /> Text
                                         </button>
 
-                                        <input type="file" ref={imageInputRef} accept="image/*" className="hidden" onChange={(e) => e.target.files && handleFileSelect(e.target.files[0])} />
+                                        <input type="file" ref={imageInputRef} multiple accept="image/*" className="hidden" onChange={(e) => { const files = e.target.files; if (files?.length) { void handleFilesSelected(files); } e.currentTarget.value = ''; }} />
                                         <button onClick={() => imageInputRef.current?.click()} className="flex items-center gap-2 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[10px] font-bold uppercase transition-colors">
                                             <ImgIcon size={14} className="text-emerald-400" /> Image
                                         </button>
 
-                                        <input type="file" ref={videoInputRef} accept="video/*" className="hidden" onChange={(e) => e.target.files && handleFileSelect(e.target.files[0])} />
+                                        <input type="file" ref={videoInputRef} multiple accept="video/*" className="hidden" onChange={(e) => { const files = e.target.files; if (files?.length) { void handleFilesSelected(files); } e.currentTarget.value = ''; }} />
                                         <button onClick={() => videoInputRef.current?.click()} className="flex items-center gap-2 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[10px] font-bold uppercase transition-colors">
                                             <Video size={14} className="text-rose-400" /> Video
                                         </button>
 
-                                        <input type="file" ref={audioInputRef} accept="audio/*" className="hidden" onChange={(e) => e.target.files && handleFileSelect(e.target.files[0])} />
+                                        <input type="file" ref={audioInputRef} multiple accept="audio/*" className="hidden" onChange={(e) => { const files = e.target.files; if (files?.length) { void handleFilesSelected(files); } e.currentTarget.value = ''; }} />
                                         <button onClick={() => audioInputRef.current?.click()} className="flex items-center gap-2 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[10px] font-bold uppercase transition-colors">
                                             <Mic size={14} className="text-sky-400" /> Audio
                                         </button>
@@ -726,13 +761,26 @@ ${analysisBody}
                                             {/* Text input continues below */}
                                         </div>
 
+                                        {artifactContexts.length > 0 && (
+                                            <div className="mt-4 pt-4 border-t border-slate-800">
+                                                <div className="text-[10px] text-slate-500 uppercase tracking-widest mb-2">Auto-extracted Context Included In Analysis</div>
+                                                <div className="max-h-40 space-y-2 overflow-y-auto rounded-xl border border-slate-800 bg-black/20 p-3 scrollbar-thin scrollbar-thumb-slate-700">
+                                                    {artifactContexts.map((context) => (
+                                                        <div key={context.id} className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 text-[11px] leading-relaxed text-slate-300 whitespace-pre-wrap">
+                                                            {context.previewText}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+
                                         <div className="mt-4 pt-4 border-t border-slate-800">
-                                            <div className="text-[10px] text-slate-500 uppercase tracking-widest mb-2">Analyst Notes / Transcription / Raw Text</div>
+                                            <div className="text-[10px] text-slate-500 uppercase tracking-widest mb-2">Analyst Notes / Additional Context</div>
                                             <textarea 
                                                 value={rawContent}
                                                 onChange={(e) => handleRawContentChange(e.target.value)}
                                                 className="w-full bg-transparent text-xs text-slate-300 font-mono h-24 focus:outline-none resize-none"
-                                                placeholder="Add context..."
+                                                placeholder="Add analyst notes, manual transcription, or extra context..."
                                             />
                                         </div>
                                     </div>

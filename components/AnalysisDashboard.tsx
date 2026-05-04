@@ -4,6 +4,7 @@ import { IntelligencePackage, ChatMessage, Entity, ContextCard, StudyItem, Timel
 // Import generateStoryFromTimeline
 import { askContextualQuestion, generateExecutiveBrief, generateSynthesis, isEntityMatch, generateSynapseAnalysis, crossReferenceStudies, generateTimelineNarrative, reanalyzeEntityWithCrossReference, generateStoryFromTimeline } from '../services/intelligenceService';
 import { buildEntityContextCardFromPackage } from '../services/analysisService';
+import { getActiveResearchProfiles, getResearchProfile } from '../services/researchProfiles';
 import { StudyService, generateUUID } from '../services/studyService';
 import { getLinkedStudiesForEntity, isEquivalentStudyContext } from '../services/correlationUtils';
 import GraphView from './GraphView';
@@ -100,6 +101,24 @@ interface AnalysisDashboardProps {
   study: StudyItem;
 }
 
+const trustBadgeClass = (value?: string) => {
+  if (!value) return 'border-slate-700 text-slate-400 bg-black/20';
+  if (value === 'current' || value === 'supported') return 'border-emerald-400/25 text-emerald-300 bg-emerald-400/5';
+  if (value === 'historical' || value === 'partial' || value === 'amended') return 'border-amber-400/25 text-amber-200 bg-amber-400/5';
+  if (value === 'contradicted' || value === 'unsupported' || value === 'cancelled' || value === 'superseded') return 'border-rose-400/25 text-rose-300 bg-rose-400/5';
+  return 'border-slate-700 text-slate-400 bg-black/20';
+};
+
+const trustBadgeLabel = (value?: string) => {
+  if (!value) return '';
+  if (value === 'current') return 'Current';
+  if (value === 'historical') return 'Historical';
+  if (value === 'supported') return 'Citation verified';
+  if (value === 'unsupported') return 'Unsupported';
+  if (value === 'contradicted') return 'Conflict';
+  return value.replace(/_/g, ' ');
+};
+
 export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ data, allStudies, onReset, onSave, onSelectStudy, study }) => {
   const [localEntities, setLocalEntities] = useState<Entity[]>(data.entities);
   const [localGraph, setLocalGraph] = useState(data.graph);
@@ -184,9 +203,46 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ data, allS
   const [isGeneratingQueries, setIsGeneratingQueries] = useState(false);
   const [isPipelineOverviewOpen, setIsPipelineOverviewOpen] = useState(false);
   const [isPipelinePostureOpen, setIsPipelinePostureOpen] = useState(false);
+  const activeResearchProfile = useMemo(() => getResearchProfile(data.research_profile), [data.research_profile]);
+  const activeProfileIds = useMemo(
+    () => getActiveResearchProfiles(data.research_profile_detection, data.research_profile),
+    [data.research_profile, data.research_profile_detection],
+  );
+  const activeProfileLabels = useMemo(
+    () => activeProfileIds.map((profileId) => getResearchProfile(profileId).label),
+    [activeProfileIds],
+  );
+  const profileConfidence = Math.round((data.research_profile_detection?.confidence || 0) * 100);
+  const profileSignalLabels = useMemo(() => {
+    const detection = data.research_profile_detection;
+    if (!detection) return [];
+    const resolved = detection.resolvedProfile || data.research_profile || 'INTEL';
+    return (detection.signalHits?.[resolved] || [])
+      .sort((left, right) => right.score - left.score)
+      .slice(0, 4)
+      .map((hit) => `${hit.label} (${hit.matches})`);
+  }, [data.research_profile, data.research_profile_detection]);
 
   const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({
-    'PERSON': true, 'ORGANIZATION': true, 'LOCATION': true, 'ASSET': true, 'EVENT': false, 'DATE': false, 'MISC': false
+    'PERSON': true,
+    'ORGANIZATION': true,
+    'LOCATION': true,
+    'FACILITY': true,
+    'VEHICLE': true,
+    'IDENTIFIER': true,
+    'FINANCIAL_ACCOUNT': true,
+    'COMMUNICATION_CHANNEL': true,
+    'DIGITAL_ASSET': true,
+    'DEVICE': true,
+    'DOCUMENT': true,
+    'CARGO': true,
+    'ASSET': true,
+    'EVENT': false,
+    'METHOD': false,
+    'OBJECT': false,
+    'DATE': false,
+    'MISC': false,
+    'OTHER': false,
   });
 
   const allGlobalEntities = useMemo(() => {
@@ -452,9 +508,9 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ data, allS
         accent: 'text-[#05DF9C] border-[#05DF9C]/20 bg-[#05DF9C]/5',
       },
       {
-        label: 'Investigation threads',
+        label: `${activeResearchProfile.label} threads`,
         value: priorityThreads.length,
-        note: `${researchDossier?.collection_priorities?.length || 0} collection priorities`,
+        note: `${researchDossier?.collection_priorities?.length || 0} review priorities`,
         accent: 'text-cyan-300 border-cyan-400/20 bg-cyan-400/5',
       },
       {
@@ -470,7 +526,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ data, allS
         accent: 'text-violet-400 border-violet-400/20 bg-violet-400/5',
       },
     ];
-  }, [data.event_records, data.reference_knowledge, data.summary_panels, data.temporal_relations, data.watchlist_hits, priorityThreads.length, researchDossier?.collection_priorities?.length, retrievalArtifacts, summaryPanelList]);
+  }, [activeResearchProfile.label, data.event_records, data.reference_knowledge, data.summary_panels, data.temporal_relations, data.watchlist_hits, priorityThreads.length, researchDossier?.collection_priorities?.length, retrievalArtifacts, summaryPanelList]);
   const pipelineWarnings = useMemo(
     () => Array.from(new Set([...(retrievalArtifacts?.warnings || []), ...(data.reference_warnings || []), ...summaryPanelList.flatMap((panel) => panel.uncertainty_notes || [])])).slice(0, 5),
     [data.reference_warnings, retrievalArtifacts, summaryPanelList],
@@ -702,7 +758,89 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ data, allS
   };
 
   // --- FILTER & SORT LOGIC ---
-  const availableTypes = useMemo(() => Array.from(new Set(localEntities.map(e => e.type))), [localEntities]);
+  const normalizeTargetType = (type?: string): string => {
+    const normalized = (type || 'OTHER').toUpperCase();
+    if (normalized === 'ORG') return 'ORGANIZATION';
+    if (['PLACE', 'REGION'].includes(normalized)) return 'LOCATION';
+    if (['CONTRACT', 'AGREEMENT_DOCUMENT'].includes(normalized)) return 'AGREEMENT';
+    if (['SECTION', 'ARTICLE', 'TERM'].includes(normalized)) return 'CLAUSE';
+    if (['DUTY'].includes(normalized)) return 'OBLIGATION';
+    if (['LIABILITY'].includes(normalized)) return 'LEGAL_RISK';
+    if (['GOVERNING_LAW'].includes(normalized)) return 'JURISDICTION';
+    if (['KPI', 'FINANCIAL_METRIC', 'SCORE'].includes(normalized)) return 'METRIC';
+    if (['CURRENCY', 'MONEY'].includes(normalized)) return 'AMOUNT';
+    if (['FISCAL_PERIOD'].includes(normalized)) return 'PERIOD';
+    if (['PAYMENT', 'TRANSFER'].includes(normalized)) return 'TRANSACTION';
+    if (['SECURITY'].includes(normalized)) return 'INSTRUMENT';
+    if (['DATA', 'CORPUS', 'BENCHMARK'].includes(normalized)) return 'DATASET';
+    if (['ARCHITECTURE'].includes(normalized)) return 'MODEL';
+    if (['CLAIM', 'FINDING'].includes(normalized)) return normalized === 'CLAIM' ? 'HYPOTHESIS' : 'RESULT';
+    if (['FACILITY_SITE', 'SITE', 'BUILDING', 'CAMPUS', 'CLINIC', 'HOSPITAL', 'WAREHOUSE', 'TERMINAL', 'OFFICE', 'LAB', 'LABORATORY'].includes(normalized)) return 'FACILITY';
+    if (['URL', 'EMAIL', 'IP', 'DOMAIN', 'WALLET', 'HOSTNAME'].includes(normalized)) return 'DIGITAL_ASSET';
+    if (['ACCOUNT', 'BANK_ACCOUNT', 'IBAN', 'SWIFT', 'CARD', 'PAYMENT_ACCOUNT'].includes(normalized)) return 'FINANCIAL_ACCOUNT';
+    if (['PHONE', 'TELEGRAM', 'WHATSAPP', 'SIGNAL', 'HANDLE'].includes(normalized)) return 'COMMUNICATION_CHANNEL';
+    if (['SERVER', 'ROUTER', 'MODEM', 'CAMERA', 'RADIO', 'LAPTOP', 'TABLET', 'HANDSET'].includes(normalized)) return 'DEVICE';
+    if (['REPORT', 'FORM', 'CONTRACT', 'INVOICE', 'PASSPORT', 'MANIFEST', 'LICENSE', 'CERTIFICATE', 'MEMO', 'DOSSIER'].includes(normalized)) return 'DOCUMENT';
+    if (['CONTAINER', 'PALLET', 'SHIPMENT', 'PARCEL', 'CRATE'].includes(normalized)) return 'CARGO';
+    return normalized;
+  };
+
+  const targetTypeOrder = [
+    'AGREEMENT',
+    'CLAUSE',
+    'OBLIGATION',
+    'RIGHT',
+    'JURISDICTION',
+    'REMEDY',
+    'LEGAL_RISK',
+    'AMOUNT',
+    'METRIC',
+    'PERIOD',
+    'TRANSACTION',
+    'INSTRUMENT',
+    'COUNTERPARTY',
+    'RISK',
+    'PAPER',
+    'STUDY',
+    'MODEL',
+    'DATASET',
+    'RESULT',
+    'HYPOTHESIS',
+    'LIMITATION',
+    'BASELINE',
+    'PERSON',
+    'ORGANIZATION',
+    'LOCATION',
+    'FACILITY',
+    'VEHICLE',
+    'IDENTIFIER',
+    'FINANCIAL_ACCOUNT',
+    'COMMUNICATION_CHANNEL',
+    'DIGITAL_ASSET',
+    'DEVICE',
+    'DOCUMENT',
+    'CARGO',
+    'ASSET',
+    'EVENT',
+    'METHOD',
+    'OBJECT',
+    'DATE',
+    'MISC',
+    'OTHER',
+  ];
+
+  const availableTypes = useMemo(
+    () => Array.from<string>(new Set(localEntities.map((entity) => normalizeTargetType(entity.type))))
+      .sort((left, right) => {
+        const leftIndex = targetTypeOrder.indexOf(left);
+        const rightIndex = targetTypeOrder.indexOf(right);
+        if (leftIndex === -1 && rightIndex === -1) return left.localeCompare(right);
+        if (leftIndex === -1) return 1;
+        if (rightIndex === -1) return -1;
+        return leftIndex - rightIndex;
+      }),
+    [localEntities],
+  );
 
   const toggleTypeFilter = (type: string) => {
       setActiveTypeFilters(prev => 
@@ -716,9 +854,10 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ data, allS
     
     // 1. Filter
     const filtered = (localEntities || []).filter(entity => {
-       const matchesSearch = !lowerSearch || entity.name.toLowerCase().includes(lowerSearch) || entity.type.toLowerCase().includes(lowerSearch);
+       const normalizedType = normalizeTargetType(entity.type);
+       const matchesSearch = !lowerSearch || entity.name.toLowerCase().includes(lowerSearch) || normalizedType.toLowerCase().includes(lowerSearch);
        const matchesConf = (entity.confidence || 0) * 100 >= minConfidence;
-       const matchesType = activeTypeFilters.length === 0 || activeTypeFilters.includes(entity.type);
+       const matchesType = activeTypeFilters.length === 0 || activeTypeFilters.includes(normalizedType);
        return matchesSearch && matchesConf && matchesType;
     });
 
@@ -730,10 +869,20 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ data, allS
 
     // 3. Group
     filtered.forEach(entity => {
-      if (!groups[entity.type]) groups[entity.type] = [];
-      groups[entity.type].push(entity);
+      const normalizedType = normalizeTargetType(entity.type);
+      if (!groups[normalizedType]) groups[normalizedType] = [];
+      groups[normalizedType].push({ ...entity, type: normalizedType });
     });
-    return groups;
+    return Object.fromEntries(
+      Object.entries(groups).sort(([left], [right]) => {
+        const leftIndex = targetTypeOrder.indexOf(left);
+        const rightIndex = targetTypeOrder.indexOf(right);
+        if (leftIndex === -1 && rightIndex === -1) return left.localeCompare(right);
+        if (leftIndex === -1) return 1;
+        if (rightIndex === -1) return -1;
+        return leftIndex - rightIndex;
+      }),
+    );
   }, [localEntities, entitySearch, minConfidence, activeTypeFilters, sortBy]);
 
   const toggleCategory = (cat: string) => setExpandedCategories(prev => ({ ...prev, [cat]: !prev[cat] }));
@@ -886,9 +1035,19 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ data, allS
       case 'PERSON': return <Users size={18} className="text-rose-400" />;
       case 'ORGANIZATION': return <Building2 size={18} className="text-sky-400" />;
       case 'LOCATION': return <MapPin size={18} className="text-emerald-400" />;
+      case 'FACILITY': return <Map size={18} className="text-teal-400" />;
+      case 'VEHICLE': return <Waypoints size={18} className="text-orange-400" />;
+      case 'IDENTIFIER': return <Target size={18} className="text-yellow-300" />;
+      case 'FINANCIAL_ACCOUNT': return <ClipboardList size={18} className="text-lime-400" />;
+      case 'COMMUNICATION_CHANNEL': return <MessageCircle size={18} className="text-cyan-300" />;
+      case 'DIGITAL_ASSET': return <Link size={18} className="text-indigo-300" />;
+      case 'DEVICE': return <Cpu size={18} className="text-fuchsia-300" />;
+      case 'DOCUMENT': return <FileText size={18} className="text-blue-300" />;
+      case 'CARGO': return <Box size={18} className="text-amber-300" />;
       case 'DATE': return <Calendar size={18} className="text-amber-400" />;
       case 'ASSET': return <Box size={18} className="text-amber-500" />;
       case 'EVENT': return <Zap size={18} className="text-purple-400" />;
+      case 'METHOD': return <GitBranch size={18} className="text-violet-300" />;
       default: return <Layers size={18} className="text-slate-400" />;
     }
   };
@@ -1349,12 +1508,50 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ data, allS
         </div>
       </div>
 
+      {data.research_profile_detection && (
+        <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/[0.04] p-5">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 text-cyan-200">
+                <Workflow size={16} />
+                <span className="text-[10px] font-bold uppercase tracking-[0.24em]">Adaptive analysis profile</span>
+              </div>
+              <div>
+                <div className="text-lg font-bold text-white">{activeProfileLabels.join(' + ')}</div>
+                <p className="mt-1 max-w-3xl text-xs leading-relaxed text-slate-400" dir="auto">
+                  {data.research_profile_detection.rationale}
+                </p>
+              </div>
+              {profileSignalLabels.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {profileSignalLabels.map((signal) => (
+                    <span key={signal} className="rounded-full border border-slate-700 bg-black/20 px-3 py-1 text-[10px] text-slate-300">
+                      {signal}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-3 text-center sm:min-w-[260px]">
+              <div className="rounded-xl border border-slate-800 bg-black/20 p-3">
+                <div className="text-2xl font-bold text-[#05DF9C]">{profileConfidence}%</div>
+                <div className="mt-1 text-[9px] font-bold uppercase tracking-widest text-slate-500">Confidence</div>
+              </div>
+              <div className="rounded-xl border border-slate-800 bg-black/20 p-3">
+                <div className="text-2xl font-bold text-cyan-200">{activeProfileIds.length}</div>
+                <div className="mt-1 text-[9px] font-bold uppercase tracking-widest text-slate-500">Active Domains</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {researchDossier && priorityThreads.length > 0 && (
         <div className="space-y-5">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <h3 className="text-sm font-bold text-white uppercase tracking-widest">Investigation Dossier</h3>
-              <p className="text-xs text-slate-500">Research-first synthesis that groups evidence into analyst-ready threads, gaps, and next steps.</p>
+              <h3 className="text-sm font-bold text-white uppercase tracking-widest">{activeResearchProfile.label} Dossier</h3>
+              <p className="text-xs text-slate-500">Research-first synthesis that groups evidence into domain-ready threads, gaps, and next steps.</p>
             </div>
             <div className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.22em] text-cyan-200">
               {priorityThreads.length} active threads
@@ -1383,7 +1580,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ data, allS
             <div className="rounded-2xl border border-slate-800 bg-[#121212]/60 p-5 space-y-4">
               <div className="flex items-center gap-2 text-amber-300">
                 <Target size={16} />
-                <span className="text-[10px] font-bold uppercase tracking-[0.24em]">Collection priorities</span>
+                <span className="text-[10px] font-bold uppercase tracking-[0.24em]">Review priorities</span>
               </div>
               <div className="space-y-2">
                 {(researchDossier.collection_priorities || []).slice(0, 5).map((priority, index) => (
@@ -1495,6 +1692,18 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ data, allS
                   <div>
                     <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#05DF9C]">{panel.kind.replace(/_/g, ' ')}</div>
                     <div className="mt-1 text-lg font-bold text-white">{panel.title}</div>
+                    <div className="mt-2 flex flex-wrap gap-2 text-[10px] font-mono">
+                      {panel.version_state && (
+                        <span className={`rounded-full border px-2 py-0.5 ${trustBadgeClass(panel.version_state)}`}>
+                          {trustBadgeLabel(panel.version_state)}
+                        </span>
+                      )}
+                      {panel.citation_status && (
+                        <span className={`rounded-full border px-2 py-0.5 ${trustBadgeClass(panel.citation_status)}`}>
+                          {trustBadgeLabel(panel.citation_status)}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="rounded-xl border border-slate-700 bg-black/20 px-3 py-2 text-right">
                     <div className="text-[9px] uppercase tracking-widest text-slate-500">Confidence</div>
@@ -1599,6 +1808,8 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ data, allS
                         <span className="flex items-center gap-2">
                           <span>{hit.item_type}</span>
                           {hit.reference_only && <span className="rounded-full border border-violet-400/20 px-2 py-0.5 text-violet-300">reference</span>}
+                          {hit.version_state && <span className={`rounded-full border px-2 py-0.5 ${trustBadgeClass(hit.version_state)}`}>{trustBadgeLabel(hit.version_state)}</span>}
+                          {hit.citation_status && <span className={`rounded-full border px-2 py-0.5 ${trustBadgeClass(hit.citation_status)}`}>{trustBadgeLabel(hit.citation_status)}</span>}
                         </span>
                         <span className="font-mono text-[#05DF9C]">score {hit.score.toFixed(2)}</span>
                       </div>
@@ -2057,7 +2268,9 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ data, allS
           )}
 
           <div className="flex justify-between items-center px-1">
-             <span className="text-[9px] uppercase font-bold text-slate-500 tracking-wider">{Object.values(groupedEntities).flat().length} Targets Identified</span>
+             <span className="text-[9px] uppercase font-bold text-slate-500 tracking-wider">
+               {Object.values(groupedEntities).flat().length} {activeResearchProfile.label} Entities
+             </span>
              <div className="flex gap-2"><button onClick={() => toggleAllCategories(true)} className="text-[9px] text-slate-500 hover:text-[#05DF9C] font-bold uppercase">EXPAND</button><button onClick={() => toggleAllCategories(false)} className="text-[9px] text-slate-500 hover:text-[#05DF9C] font-bold uppercase">COLLAPSE</button></div>
           </div>
         </div>
@@ -2113,7 +2326,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ data, allS
            <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
            <div>
               <div className="tevel-kicker text-[10px] mb-2">Analysis surfaces</div>
-              <div className="text-white text-2xl font-bold tevel-title">Investigation Workbench</div>
+              <div className="text-white text-2xl font-bold tevel-title">{activeResearchProfile.label} Workbench</div>
            </div>
            <div className="flex items-center gap-6">
            <div className="flex gap-1 bg-[#181818] p-1 rounded-lg border border-slate-800">
@@ -2208,14 +2421,14 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ data, allS
                    <ul className="space-y-3">{(data.tactical_assessment?.recommendations || []).map((item, i) => (<li key={i} className="flex gap-3 text-sm text-slate-300 group"><ChevronRight size={16} className="mt-1 text-slate-600 shrink-0" /><span className="flex-1" dir="auto">{item}</span><button onClick={() => handlePinItem('snippet', 'Recommendation', item)} className="opacity-0 group-hover:opacity-100"><Pin size={12} className="text-slate-500 hover:text-white"/></button></li>))}</ul>
                  </div>
                  <div className="bg-amber-950/20 border border-amber-500/30 rounded-xl p-6">
-                   <h3 className="font-bold text-amber-300 flex items-center gap-2 mb-4"><AlertOctagon size={16} className="text-amber-400" /> Intelligence Gaps</h3>
+                   <h3 className="font-bold text-amber-300 flex items-center gap-2 mb-4"><AlertOctagon size={16} className="text-amber-400" /> Domain Gaps</h3>
                    <ul className="space-y-3">{(data.tactical_assessment?.gaps || []).map((item, i) => (<li key={i} className="flex gap-3 text-sm text-amber-200/90 group"><HelpCircle size={16} className="mt-1 text-amber-400/50 shrink-0" /><span className="flex-1" dir="auto">{item}</span><button onClick={() => handlePinItem('snippet', 'Intel Gap', item)} className="opacity-0 group-hover:opacity-100"><Pin size={12} className="text-amber-300 hover:text-white"/></button></li>))}</ul>
                  </div>
                </div>
                {((data.intel_questions || []).length > 0 || (data.intel_tasks || []).length > 0) && (
                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                    <div className="bg-[#121212]/50 border border-slate-800 rounded-xl p-6">
-                     <h3 className="font-bold text-white flex items-center gap-2 mb-4"><HelpCircle size={16} className="text-amber-400" /> Investigation Questions</h3>
+                     <h3 className="font-bold text-white flex items-center gap-2 mb-4"><HelpCircle size={16} className="text-amber-400" /> {activeResearchProfile.label} Questions</h3>
                      <ul className="space-y-3">{(data.intel_questions || []).map((question, i) => (<li key={question.question_id || i} className="flex gap-3 text-sm text-slate-300 group"><HelpCircle size={16} className="mt-1 text-amber-400/50 shrink-0" /><div className="flex-1"><div dir="auto">{question.question_text}</div><div className="text-[10px] font-mono text-slate-500 mt-1">{question.priority}</div></div><button onClick={() => handlePinItem('snippet', 'Question', question.question_text)} className="opacity-0 group-hover:opacity-100"><Pin size={12} className="text-slate-500 hover:text-white"/></button></li>))}</ul>
                    </div>
                    <div className="bg-[#121212]/50 border border-slate-800 rounded-xl p-6">

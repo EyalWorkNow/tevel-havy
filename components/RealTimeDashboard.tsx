@@ -49,10 +49,10 @@ type ConversationMessage = {
 };
 
 const QUICK_PROMPTS = [
-  "Which entities recur across the highest-risk cases in the corpus?",
-  "What contradictions or stale claims are visible across the active database?",
-  "Summarize the most important operational network and cite the strongest evidence.",
-  "What collection gaps are repeated across multiple cases right now?",
+  "Which entities recur across the highest-risk records in the current DB scope?",
+  "What contradictions or stale claims are visible in the active database records?",
+  "Summarize the strongest operational network found in the DB and cite the evidence.",
+  "What collection gaps repeat across multiple DB records right now?",
 ];
 
 const ENGINE_STORAGE_KEY = "tevel.liveResearch.reasoningEngine";
@@ -162,7 +162,7 @@ const buildSeedMessage = (
   engineSurface: LiveResearchEngineTrace["engineSurface"] = PRIMARY_REASONING_ENGINE.surface,
 ): string => {
   if (studiesCount === 0) {
-    return "No studies are currently loaded. Ingest data first, then use Live Research to chat with the corpus.";
+    return "No database records are currently loaded. Ingest data first, then use Live Research to query the DB.";
   }
 
   const engineDescriptor =
@@ -170,27 +170,30 @@ const buildSeedMessage = (
       ? `${engineLabel} cloud reasoning`
       : `the local model (${engineLabel})`;
 
-  return `Ask across ${studiesCount} stored studies. TEVEL will route the question through scoped retrieval, evidence packs, and citation checks before ${engineDescriptor} answers.`;
+  return `Ask questions against ${studiesCount} database records in the current scope. TEVEL will answer only from DB evidence, scoped retrieval, and citation checks before ${engineDescriptor} responds.`;
 };
 
 const buildEngineNarrative = (
   engineTrace: LiveResearchEngineTrace | undefined,
   selectedEngineLabel: string,
   selectedEngineSurface: LiveResearchEngineTrace["engineSurface"],
+  hasFcfAudit: boolean,
 ): string => {
   const engineLabel = engineTrace?.engineLabel || selectedEngineLabel;
   const engineSurface = engineTrace?.engineSurface || selectedEngineSurface;
 
   if (engineTrace?.responseMode === "deterministic-fallback") {
-    return `${engineTrace.failureMessage || "The reasoning engine was unavailable."} TEVEL returned a deterministic FCF-R3 synthesis from the selected evidence instead.`;
+    return hasFcfAudit
+      ? `${engineTrace.failureMessage || "The reasoning engine was unavailable."} TEVEL returned a deterministic verified synthesis from the selected evidence instead.`
+      : `${engineTrace.failureMessage || "The reasoning engine was unavailable."} TEVEL returned a source-grounded fallback from the selected DB excerpts instead.`;
   }
   if (engineTrace?.responseMode === "verified-synthesis") {
-    return `The selected reasoning engine answered, but TEVEL promoted the FCF-R3 verified synthesis because the model output did not cite the selected evidence strongly enough.`;
+    return `The selected reasoning engine answered, but TEVEL promoted a verified synthesis because the model output did not cite the selected evidence strongly enough.`;
   }
 
   return engineSurface === "cloud"
-    ? `${engineLabel} performs the deep reasoning pass over scoped corpus summaries, entities, and links.`
-    : `The local model ${engineLabel} performs the deep reasoning pass over scoped corpus summaries, entities, and links.`;
+    ? `${engineLabel} performs the reasoning pass over scoped database records, entities, and evidence links.`
+    : `The local model ${engineLabel} performs the reasoning pass over scoped database records, entities, and evidence links.`;
 };
 
 const RealTimeDashboard: React.FC<RealTimeDashboardProps> = ({ studies = [] }) => {
@@ -199,6 +202,7 @@ const RealTimeDashboard: React.FC<RealTimeDashboardProps> = ({ studies = [] }) =
   const [isChatting, setIsChatting] = useState(false);
   const [studyFilter, setStudyFilter] = useState("");
   const [selectedStudyIds, setSelectedStudyIds] = useState<string[]>([]);
+  const [isHeaderOpen, setIsHeaderOpen] = useState(true);
   const [selectedEngineId, setSelectedEngineId] = useState<ReasoningEngineId>(readStoredReasoningEngine);
   const [geminiApiKey, setGeminiApiKey] = useState(readStoredGeminiApiKey);
 
@@ -236,6 +240,7 @@ const RealTimeDashboard: React.FC<RealTimeDashboardProps> = ({ studies = [] }) =
   const displayWarnings = latestResearch?.warnings || corpusPreview.warnings;
   const citationGuard = latestResearch?.citationGuard || (corpusPreview.package.retrieval_artifacts ? "active" : "limited");
   const fcfAudit = latestResearch?.fcfAudit;
+  const tokenBenchmark = latestResearch?.tokenBenchmark;
   const engineTrace = latestResearch?.engineTrace;
   const engineBadge = formatEngineBadge(
     engineTrace?.engineLabel || selectedEngine.label,
@@ -366,12 +371,12 @@ const RealTimeDashboard: React.FC<RealTimeDashboardProps> = ({ studies = [] }) =
                 <Database size={18} />
               </div>
               <div>
-                <div className="text-[10px] font-mono uppercase tracking-[0.22em] text-slate-500">Corpus Scope</div>
-                <div className="mt-1 text-lg font-semibold text-white">Database Routing</div>
+                <div className="text-[10px] font-mono uppercase tracking-[0.22em] text-slate-500">DB Scope</div>
+                <div className="mt-1 text-lg font-semibold text-white">Database Records</div>
               </div>
             </div>
             <p className="mt-3 text-sm leading-relaxed text-slate-400">
-              Route the chat across the whole database or narrow it to a deliberate case scope before retrieval starts.
+              Choose whether the chat searches the full DB or only a narrower record scope before retrieval starts.
             </p>
           </div>
 
@@ -385,8 +390,8 @@ const RealTimeDashboard: React.FC<RealTimeDashboardProps> = ({ studies = [] }) =
               }`}
             >
               <div>
-                <div className="text-sm font-semibold">Use whole database</div>
-                <div className="mt-1 text-[11px] text-slate-400">{studies.length} stored studies stay in scope</div>
+                <div className="text-sm font-semibold">Use full DB scope</div>
+                <div className="mt-1 text-[11px] text-slate-400">{studies.length} database records stay in scope</div>
               </div>
               {selectedStudyIds.length === 0 ? <CheckCircle2 size={16} className="text-emerald-300" /> : <ChevronRight size={16} />}
             </button>
@@ -397,7 +402,7 @@ const RealTimeDashboard: React.FC<RealTimeDashboardProps> = ({ studies = [] }) =
                 <input
                   value={studyFilter}
                   onChange={(event) => setStudyFilter(event.target.value)}
-                  placeholder="Filter studies by title, source, or tag"
+                  placeholder="Filter DB records by title, source, or tag"
                   className="w-full bg-transparent py-1 text-sm text-white outline-none placeholder:text-slate-600"
                 />
               </div>
@@ -406,7 +411,7 @@ const RealTimeDashboard: React.FC<RealTimeDashboardProps> = ({ studies = [] }) =
 
           <div className="flex flex-col flex-1 min-h-0 px-4 pb-4">
             <div className="shrink-0 mb-3 flex items-center justify-between px-1">
-              <div className="text-[10px] font-mono uppercase tracking-[0.22em] text-slate-500">Scoped Cases</div>
+              <div className="text-[10px] font-mono uppercase tracking-[0.22em] text-slate-500">Scoped Records</div>
               <div className="text-[11px] text-slate-500">{selectedStudyIds.length || studies.length} active</div>
             </div>
             <div className="flex-1 min-h-0 space-y-2 overflow-y-auto pr-1">
@@ -442,7 +447,7 @@ const RealTimeDashboard: React.FC<RealTimeDashboardProps> = ({ studies = [] }) =
 
               {filteredStudies.length === 0 && (
                 <div className="rounded-2xl border border-dashed border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
-                  No studies matched the current filter.
+                  No database records matched the current filter.
                 </div>
               )}
             </div>
@@ -450,98 +455,130 @@ const RealTimeDashboard: React.FC<RealTimeDashboardProps> = ({ studies = [] }) =
         </aside>
 
         <section className="flex flex-col min-h-0 overflow-hidden rounded-[30px] border border-slate-800/80 bg-[linear-gradient(180deg,rgba(8,12,19,0.98),rgba(3,6,11,1))]">
-          <div className="shrink-0 border-b border-slate-800/80 px-6 py-5">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-              <div className="max-w-3xl">
-                <div className="text-[10px] font-mono uppercase tracking-[0.24em] text-slate-500">Live Research Chat</div>
-                <div className="mt-2 flex items-center gap-3">
-                  <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-2 text-emerald-200">
-                    <BrainCircuit size={18} />
-                  </div>
-                  <h2 className="text-2xl font-semibold text-white">Chat with the full TEVEL corpus</h2>
+          <div className="shrink-0 border-b border-slate-800/80 px-6 py-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className={`rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-1.5 text-emerald-200 transition-transform ${isHeaderOpen ? "" : "scale-75"}`}>
+                  <BrainCircuit size={16} />
                 </div>
-                <p className="mt-3 text-sm leading-relaxed text-slate-400">
-                  Every question is routed through scoped case selection, evidence retrieval, citation verification, and the primary reasoning engine already embedded in the platform.
-                </p>
-                <div className="mt-4 rounded-2xl border border-slate-800 bg-black/20 p-3">
-                  <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-                    <div>
-                      <div className="text-[10px] font-mono uppercase tracking-[0.22em] text-slate-500">Reasoning Engine</div>
-                      <div className="mt-1 text-sm text-slate-300">
-                        Choose which model performs the analysis pass after FCF-R3 retrieval and citation assembly.
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setSelectedEngineId("ollama-local")}
-                        className={`rounded-2xl border px-3 py-2 text-xs font-semibold transition-colors ${
-                          selectedEngineId === "ollama-local"
-                            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-100"
-                            : "border-slate-700 bg-black/20 text-slate-300 hover:border-slate-600"
-                        }`}
-                      >
-                        Local Ollama
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setSelectedEngineId("gemini-cloud")}
-                        className={`rounded-2xl border px-3 py-2 text-xs font-semibold transition-colors ${
-                          selectedEngineId === "gemini-cloud"
-                            ? "border-cyan-500/30 bg-cyan-500/10 text-cyan-100"
-                            : "border-slate-700 bg-black/20 text-slate-300 hover:border-slate-600"
-                        }`}
-                      >
-                        Gemini Cloud
-                      </button>
-                    </div>
-                  </div>
-
-                  {selectedEngineId === "gemini-cloud" && (
-                    <div className="mt-3 grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
-                      <input
-                        value={geminiApiKey}
-                        onChange={(event) => setGeminiApiKey(event.target.value)}
-                        type="password"
-                        placeholder={HAS_CONFIGURED_GEMINI_API_KEY ? "Gemini API key loaded from env" : "Paste Gemini API key for this browser"}
-                        className="w-full rounded-2xl border border-slate-800 bg-black/30 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-500/30"
-                      />
-                      <span className={`rounded-full border px-3 py-2 text-[11px] ${
-                        geminiConfigured
-                          ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-200"
-                          : "border-amber-500/25 bg-amber-500/10 text-amber-200"
-                      }`}>
-                        {geminiConfigured ? "Gemini key ready" : "Gemini key required"}
-                      </span>
-                      <div className="text-[11px] leading-relaxed text-slate-500 lg:col-span-2">
-                        The key is stored only in this browser profile and is not written into the repository.
-                      </div>
+                <div>
+                  <h2 className="text-lg font-semibold text-white">TEVEL Research</h2>
+                  {!isHeaderOpen && (
+                    <div className="flex items-center gap-2 text-[10px] text-slate-500">
+                      <span>{activeScopeCount} records in scope</span>
+                      <span className="h-1 w-1 rounded-full bg-slate-700" />
+                      <span>{engineBadge}</span>
+                      <span className="h-1 w-1 rounded-full bg-slate-700" />
+                      <span>{reasoningOutcomeLabel}</span>
                     </div>
                   )}
                 </div>
               </div>
+              <button
+                onClick={() => setIsHeaderOpen(!isHeaderOpen)}
+                className="flex items-center gap-2 rounded-xl border border-slate-800 bg-black/20 px-3 py-1.5 text-xs font-medium text-slate-400 transition-all hover:border-slate-700 hover:text-white"
+              >
+                {isHeaderOpen ? (
+                  <>
+                    <span>Collapse Settings</span>
+                    <Filter size={12} className="rotate-180 transition-transform" />
+                  </>
+                ) : (
+                  <>
+                    <span>Expand Settings</span>
+                    <Filter size={12} />
+                  </>
+                )}
+              </button>
+            </div>
 
-              <div className="flex flex-wrap gap-2 text-[11px]">
-                <span className="rounded-full border border-slate-700 bg-black/20 px-3 py-1.5 text-slate-300">Scope: {activeScopeCount} studies</span>
-                <span className="rounded-full border border-cyan-500/25 bg-cyan-500/10 px-3 py-1.5 text-cyan-200">Hybrid retrieval</span>
-                <span className={`rounded-full border px-3 py-1.5 ${citationGuard === "active" ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-200" : "border-amber-500/25 bg-amber-500/10 text-amber-200"}`}>
-                  {citationGuard === "active" ? "Citation guard active" : "Citation guard limited"}
-                </span>
-                <span className="rounded-full border border-slate-700 bg-black/20 px-3 py-1.5 text-slate-300">{engineBadge}</span>
-                <span className={`rounded-full border px-3 py-1.5 ${engineTrace?.responseMode === "deterministic-fallback" ? "border-amber-500/25 bg-amber-500/10 text-amber-200" : "border-slate-700 bg-black/20 text-slate-300"}`}>
-                  {reasoningOutcomeLabel}
-                </span>
+            {isHeaderOpen && (
+              <div className="mt-5 space-y-5 animate-in fade-in slide-in-from-top-2 duration-300">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                  <div className="max-w-3xl">
+                    <p className="text-sm leading-relaxed text-slate-400">
+                      Every question is answered only from records currently loaded in the database scope, with retrieval, evidence selection, and citation checks before the reasoning engine responds.
+                    </p>
+                    <div className="mt-4 rounded-2xl border border-slate-800 bg-black/20 p-3">
+                      <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+                        <div>
+                          <div className="text-[10px] font-mono uppercase tracking-[0.22em] text-slate-500">Reasoning Engine</div>
+                          <div className="mt-1 text-sm text-slate-300">
+                            Choose which model analyzes the DB evidence after scoped retrieval and citation assembly.
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedEngineId("ollama-local")}
+                            className={`rounded-2xl border px-3 py-2 text-xs font-semibold transition-colors ${
+                              selectedEngineId === "ollama-local"
+                                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-100"
+                                : "border-slate-700 bg-black/20 text-slate-300 hover:border-slate-600"
+                            }`}
+                          >
+                            Local Ollama
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedEngineId("gemini-cloud")}
+                            className={`rounded-2xl border px-3 py-2 text-xs font-semibold transition-colors ${
+                              selectedEngineId === "gemini-cloud"
+                                ? "border-cyan-500/30 bg-cyan-500/10 text-cyan-100"
+                                : "border-slate-700 bg-black/20 text-slate-300 hover:border-slate-600"
+                            }`}
+                          >
+                            Gemini Cloud
+                          </button>
+                        </div>
+                      </div>
+
+                      {selectedEngineId === "gemini-cloud" && (
+                        <div className="mt-3 grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+                          <input
+                            value={geminiApiKey}
+                            onChange={(event) => setGeminiApiKey(event.target.value)}
+                            type="password"
+                            placeholder={HAS_CONFIGURED_GEMINI_API_KEY ? "Gemini API key loaded from env" : "Paste Gemini API key for this browser"}
+                            className="w-full rounded-2xl border border-slate-800 bg-black/30 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-500/30"
+                          />
+                          <span className={`rounded-full border px-3 py-2 text-[11px] ${
+                            geminiConfigured
+                              ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-200"
+                              : "border-amber-500/25 bg-amber-500/10 text-amber-200"
+                          }`}>
+                            {geminiConfigured ? "Gemini key ready" : "Gemini key required"}
+                          </span>
+                          <div className="text-[11px] leading-relaxed text-slate-500 lg:col-span-2">
+                            The key is stored only in this browser profile and is not written into the repository.
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 text-[11px]">
+                    <span className="rounded-full border border-slate-700 bg-black/20 px-3 py-1.5 text-slate-300">Scope: {activeScopeCount} records</span>
+                    <span className="rounded-full border border-cyan-500/25 bg-cyan-500/10 px-3 py-1.5 text-cyan-200">DB-only retrieval</span>
+                    <span className={`rounded-full border px-3 py-1.5 ${citationGuard === "active" ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-200" : "border-amber-500/25 bg-amber-500/10 text-amber-200"}`}>
+                      {citationGuard === "active" ? "Citation guard active" : "Citation guard limited"}
+                    </span>
+                    <span className="rounded-full border border-slate-700 bg-black/20 px-3 py-1.5 text-slate-300">{engineBadge}</span>
+                    <span className={`rounded-full border px-3 py-1.5 ${engineTrace?.responseMode === "deterministic-fallback" ? "border-amber-500/25 bg-amber-500/10 text-amber-200" : "border-slate-700 bg-black/20 text-slate-300"}`}>
+                      {reasoningOutcomeLabel}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 pt-2 md:grid-cols-4">
+                  <StatCard label="Scoped Records" value={String(latestResearch?.scope.selectedStudies || corpusPreview.scope.selectedStudies)} hint="Database records actually searched." accent="cyan" />
+                  <StatCard label="Entities" value={String(corpusPreview.scope.totalEntities)} hint="Entities reachable inside the scope." accent="slate" />
+                  <StatCard label="Selected Evidence" value={String(fcfAudit?.selected_count ?? corpusPreview.scope.retrievalHits)} hint="Evidence atoms pulled for latest answer." accent="emerald" />
+                  <StatCard label="Risk Signals" value={String(corpusPreview.scope.watchlistHits)} hint="Signals present inside scoped records." accent="amber" />
+                </div>
               </div>
-            </div>
+            )}
           </div>
-
-          <div className="flex flex-col flex-1 min-h-0">
-            <div className="shrink-0 grid gap-3 border-b border-slate-800/80 px-6 py-4 md:grid-cols-4">
-              <StatCard label="Routed Cases" value={String(latestResearch?.scope.selectedStudies || corpusPreview.scope.selectedStudies)} hint="Cases actually selected for the latest research pass." accent="cyan" />
-              <StatCard label="Entities" value={String(corpusPreview.scope.totalEntities)} hint="Merged graph nodes reachable in the active scope." accent="slate" />
-              <StatCard label="Selected Evidence" value={String(fcfAudit?.selected_count ?? corpusPreview.scope.retrievalHits)} hint="FCF-R3 evidence atoms selected for the latest answer." accent="emerald" />
-              <StatCard label="Watchlist Hits" value={String(corpusPreview.scope.watchlistHits)} hint="External risk signals surfaced by reference knowledge." accent="amber" />
-            </div>
 
             <div className="flex-1 min-h-0 overflow-y-auto px-6 py-5">
               {messages.length === 0 ? (
@@ -553,7 +590,7 @@ const RealTimeDashboard: React.FC<RealTimeDashboardProps> = ({ studies = [] }) =
                           <Radar size={18} />
                         </div>
                         <div>
-                          <div className="text-sm font-semibold text-white">Research posture</div>
+                          <div className="text-sm font-semibold text-white">Database research mode</div>
                           <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-400">
                             {buildSeedMessage(
                               activeScopeCount,
@@ -567,26 +604,26 @@ const RealTimeDashboard: React.FC<RealTimeDashboardProps> = ({ studies = [] }) =
                         <div className="rounded-2xl border border-slate-800 bg-black/20 p-4">
                           <div className="flex items-center gap-2 text-sm font-semibold text-white">
                             <ShieldCheck size={16} className="text-emerald-300" />
-                            Evidence discipline
+                            DB-only evidence
                           </div>
                           <p className="mt-2 text-sm leading-relaxed text-slate-400">
-                            TEVEL answers from scoped evidence packs, research dossiers, summary panels, and citation-ready retrieval hits when they exist.
+                            TEVEL answers only from scoped database records, selected evidence packs, and citation-ready retrieval hits that already exist in the DB.
                           </p>
                         </div>
                         <div className="rounded-2xl border border-slate-800 bg-black/20 p-4">
                           <div className="flex items-center gap-2 text-sm font-semibold text-white">
                             <Workflow size={16} className="text-cyan-300" />
-                            Database coverage
+                            Scope control
                           </div>
                           <p className="mt-2 text-sm leading-relaxed text-slate-400">
-                            The chat searches the current corpus and narrows to the most relevant cases before the primary reasoning engine reasons over them.
+                            The chat searches only the current DB scope and narrows to the most relevant records before the reasoning engine analyzes them.
                           </p>
                         </div>
                       </div>
                     </div>
 
                     <div className="mt-6">
-                      <div className="text-[10px] font-mono uppercase tracking-[0.22em] text-slate-500">Quick Starts</div>
+                      <div className="text-[10px] font-mono uppercase tracking-[0.22em] text-slate-500">DB Questions</div>
                       <div className="mt-3 grid gap-3 lg:grid-cols-2">
                         {QUICK_PROMPTS.map((prompt) => (
                           <button
@@ -627,7 +664,9 @@ const RealTimeDashboard: React.FC<RealTimeDashboardProps> = ({ studies = [] }) =
                       {message.research?.engineTrace?.responseMode === "deterministic-fallback" && message.research.engineTrace.failureMessage && (
                         <div className="mt-3 flex items-start gap-2 rounded-2xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">
                           <AlertTriangle size={13} className="mt-0.5 shrink-0" />
-                          <span>FCF-R3 deterministic fallback engaged. {message.research.engineTrace.failureMessage}</span>
+                          <span>
+                            {message.research.fcfAudit ? "Verified deterministic fallback engaged." : "Source-grounded fallback engaged."} {message.research.engineTrace.failureMessage}
+                          </span>
                         </div>
                       )}
                       {message.research?.engineTrace?.responseMode === "verified-synthesis" && (
@@ -660,7 +699,7 @@ const RealTimeDashboard: React.FC<RealTimeDashboardProps> = ({ studies = [] }) =
                         <div className="mt-4 space-y-3">
                           <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.22em] text-slate-500">
                             <FileSearch size={12} />
-                            Source Pack Used
+                            DB Records Used
                           </div>
                           <div className="grid gap-3 xl:grid-cols-2">
                             {message.research.sources.slice(0, 4).map((source) => (
@@ -676,10 +715,10 @@ const RealTimeDashboard: React.FC<RealTimeDashboardProps> = ({ studies = [] }) =
                     <div className="max-w-[92%] rounded-[26px] border border-slate-800 bg-[linear-gradient(180deg,rgba(10,15,24,0.98),rgba(5,8,14,0.98))] px-5 py-4">
                       <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.22em] text-slate-500">
                         <Loader2 size={12} className="animate-spin" />
-                        Live Research
+                        DB Research
                       </div>
                       <div className="mt-3 text-sm text-slate-300">
-                        Routing across the scoped corpus, assembling evidence packs, and querying the primary reasoning engine...
+                        Searching the scoped database records, assembling evidence packs, and querying the reasoning engine...
                       </div>
                     </div>
                   )}
@@ -692,7 +731,7 @@ const RealTimeDashboard: React.FC<RealTimeDashboardProps> = ({ studies = [] }) =
               <div className="rounded-[28px] border border-slate-800/80 bg-[linear-gradient(180deg,rgba(8,12,19,0.98),rgba(4,8,14,0.98))] p-4">
                 <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.22em] text-slate-500">
                   <Target size={12} />
-                  Ask The Corpus
+                  Ask The Database
                 </div>
                 <div className="mt-3 flex flex-col gap-3">
                   <textarea
@@ -700,13 +739,13 @@ const RealTimeDashboard: React.FC<RealTimeDashboardProps> = ({ studies = [] }) =
                     onChange={(event) => setInput(event.target.value)}
                     onKeyDown={handleComposerKeyDown}
                     rows={4}
-                    placeholder="Ask about entities, contradictions, collection gaps, timelines, relationships, or operational pressure across the database..."
+                    placeholder="Ask a DB-only research question about entities, contradictions, timelines, relationships, or gaps in the selected records..."
                     className="w-full resize-none rounded-2xl border border-slate-800 bg-black/20 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-500/30"
                   />
                   <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                     <div className="flex flex-wrap gap-2 text-[11px] text-slate-500">
-                      <span className="rounded-full border border-slate-800 px-3 py-1.5">{activeScopeCount} studies in scope</span>
-                      <span className="rounded-full border border-slate-800 px-3 py-1.5">{corpusPreview.scope.retrievalHits} retrieval hits available</span>
+                      <span className="rounded-full border border-slate-800 px-3 py-1.5">{activeScopeCount} DB records in scope</span>
+                      <span className="rounded-full border border-slate-800 px-3 py-1.5">{corpusPreview.scope.retrievalHits} DB evidence hits available</span>
                       <span className="rounded-full border border-slate-800 px-3 py-1.5">{citationGuard === "active" ? "Citation verification on" : "Citation verification limited"}</span>
                       <span className={`rounded-full border px-3 py-1.5 ${isGeminiBlocked ? "border-amber-500/30 text-amber-200" : "border-slate-800 text-slate-500"}`}>
                         {isGeminiBlocked ? "Gemini key required" : engineBadge}
@@ -718,13 +757,12 @@ const RealTimeDashboard: React.FC<RealTimeDashboardProps> = ({ studies = [] }) =
                       className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[#05DF9C] px-5 py-3 text-sm font-semibold text-black transition-colors hover:bg-[#39e5af] disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
                     >
                       {isChatting ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
-                      Send To Live Research
+                      Query DB
                     </button>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
         </section>
 
         <aside className="flex flex-col min-h-0 overflow-hidden rounded-[28px] border border-slate-800/80 bg-[linear-gradient(180deg,rgba(7,11,18,0.98),rgba(3,7,12,0.98))]">
@@ -734,18 +772,26 @@ const RealTimeDashboard: React.FC<RealTimeDashboardProps> = ({ studies = [] }) =
                 <BookOpen size={18} />
               </div>
               <div>
-                <div className="text-[10px] font-mono uppercase tracking-[0.22em] text-slate-500">Provenance Rail</div>
-                <div className="mt-1 text-lg font-semibold text-white">Latest Evidence Pack</div>
+                <div className="text-[10px] font-mono uppercase tracking-[0.22em] text-slate-500">DB Evidence Rail</div>
+                <div className="mt-1 text-lg font-semibold text-white">Latest DB Evidence Pack</div>
               </div>
             </div>
             <p className="mt-3 text-sm leading-relaxed text-slate-400">
-              Inspect the case packets, warnings, and guardrails that the current answer or scope is leaning on.
+              Inspect the database records, warnings, and evidence guardrails that the current answer is leaning on.
             </p>
           </div>
 
           <div className="shrink-0 grid gap-3 border-b border-slate-800/80 p-4 md:grid-cols-2 xl:grid-cols-1">
-            <StatCard label="Selected Cases" value={String(latestResearch?.scope.selectedStudies || corpusPreview.scope.selectedStudies)} hint="Top cases sent into the latest reasoning pass." accent="cyan" />
-            <StatCard label="Citation Ready" value={String(latestResearch?.scope.citationReadyStudies || corpusPreview.scope.citationReadyStudies)} hint="Studies in the active scope with retrieval artifacts." accent="emerald" />
+            <StatCard label="Selected Records" value={String(latestResearch?.scope.selectedStudies || corpusPreview.scope.selectedStudies)} hint="Top DB records sent into the latest reasoning pass." accent="cyan" />
+            <StatCard label="Citation Ready" value={String(latestResearch?.scope.citationReadyStudies || corpusPreview.scope.citationReadyStudies)} hint="DB records in the active scope with retrieval artifacts." accent="emerald" />
+            {tokenBenchmark && (
+              <StatCard
+                label="Prompt Budget"
+                value={`${tokenBenchmark.promptEstimatedTokens.toLocaleString()} tok`}
+                hint={`${tokenBenchmark.route}; ${tokenBenchmark.selectedContextEstimatedTokens.toLocaleString()} context tokens from ${tokenBenchmark.rawSourceEstimatedTokens.toLocaleString()} raw tokens.`}
+                accent="amber"
+              />
+            )}
           </div>
 
           <div className="flex-1 min-h-0 space-y-4 overflow-y-auto p-4">
@@ -802,7 +848,7 @@ const RealTimeDashboard: React.FC<RealTimeDashboardProps> = ({ studies = [] }) =
               <div className="mt-3 space-y-2 text-sm text-slate-400">
                 <div className="flex items-start gap-2">
                   <ChevronRight size={14} className="mt-0.5 shrink-0 text-cyan-300" />
-                  <span>{buildEngineNarrative(engineTrace, selectedEngine.label, selectedEngine.surface)}</span>
+                  <span>{buildEngineNarrative(engineTrace, selectedEngine.label, selectedEngine.surface, Boolean(fcfAudit))}</span>
                 </div>
                 <div className="flex items-start gap-2">
                   <ChevronRight size={14} className="mt-0.5 shrink-0 text-cyan-300" />

@@ -24,15 +24,23 @@ import {
 import { buildFcfR3PersistedRun } from "./fcfR3/contracts";
 import { persistFcfR3Run } from "./fcfR3/store";
 import { verifyAnswerCitations } from "./sidecar/citationVerification/service";
+import type { ResearchProfileId } from "./researchProfiles";
 
 const MAX_SELECTED_STUDIES = 4;
 const MAX_MATCHED_SIGNALS = 5;
 const MAX_EVIDENCE_PREVIEWS = 3;
+const MAX_RAW_SOURCE_EXCERPTS = 3;
+const MAX_RAW_SOURCE_EXCERPT_CHARS = 860;
+const MAX_RAW_SOURCE_SEGMENTS = 720;
 const MAX_STUDY_BLOCK_CHARS = 1400;
 const MAX_CORPUS_TEXT_CHARS = 6500;
 const MAX_STUDY_GIST_CHARS = 420;
 const MAX_CONTEXT_CARD_CHARS = 360;
 const MAX_EVIDENCE_SNIPPET_CHARS = 520;
+const isGlobalDbSearchQuery = (question: string): boolean =>
+  /\b(?:all database|entire database|global search|cross[-\s]?case|across cases|compare cases|all reports|other cases|full db|whole corpus)\b|בכל המאגר|כל המאגר|חיפוש גלובלי|בין כל התיקים|השווה בין.*תיקים|עוד תיקים|כל הדוחות/i.test(
+    question,
+  );
 const QUERY_STOPWORDS = new Set([
   "מה",
   "מי",
@@ -72,6 +80,28 @@ const QUERY_STOPWORDS = new Set([
   "could",
   "you",
   "me",
+  "please",
+  "analyze",
+  "analysis",
+  "document",
+  "documents",
+  "file",
+  "files",
+  "uploaded",
+  "upload",
+  "report",
+  "reports",
+  "בבקשה",
+  "נתח",
+  "ניתוח",
+  "מסמך",
+  "מסמכים",
+  "קובץ",
+  "קבצים",
+  "דוח",
+  "דוחות",
+  "שהעליתי",
+  "העליתי",
 ]);
 
 export interface LiveResearchSource {
@@ -99,6 +129,13 @@ export interface LiveResearchScopeSummary {
   watchlistHits: number;
   retrievalBundles: number;
   retrievalHits: number;
+  active_context_id?: string;
+  active_context_reason?: string;
+  active_context_confidence?: number;
+  query_entity_mentions_in_context?: number;
+  alias_mentions_in_context?: number;
+  number_of_relevant_evidence_atoms?: number;
+  competing_contexts?: Array<{ id: string; title: string; confidence: number }>;
 }
 
 export interface LiveResearchCorpus {
@@ -126,11 +163,26 @@ export interface LiveResearchAnswer {
   citationGuard: "active" | "limited";
   engineTrace?: LiveResearchEngineTrace;
   fcfAudit?: FcfR3AuditSummary;
+  tokenBenchmark?: LiveResearchTokenBenchmark;
 }
 
 export interface LiveResearchQuestionOptions {
   reasoningEngineId?: ReasoningEngineId;
   geminiApiKey?: string;
+}
+
+export interface LiveResearchTokenBenchmark {
+  route: "source-grounded" | "fcf-r3" | "blocked" | "empty";
+  selectedSourceCount: number;
+  scopedSourceCount: number;
+  rawSourceChars: number;
+  rawSourceEstimatedTokens: number;
+  selectedContextChars: number;
+  selectedContextEstimatedTokens: number;
+  promptEstimatedTokens: number;
+  compressionRatio: number;
+  outputExclusions: string[];
+  warnings: string[];
 }
 
 type ScoredStudy = {
@@ -141,11 +193,41 @@ type ScoredStudy = {
   exactEntityMatches: string[];
   entityTermMatches: string[];
   phraseMatches: string[];
+  matchedTerms: string[];
+  lexicalScore: number;
+  queryEntityMentions: number;
+  aliasMentions: number;
+  relevantEvidenceAtoms: number;
+  relevantClusterDensity: number;
+  activeContextConfidence: number;
+  activeContextReason: string;
+};
+
+type StudySelectionResult = {
+  selected: ScoredStudy[];
+  activeContextId?: string;
+  activeContextReason?: string;
+  activeContextConfidence?: number;
+  queryEntityMentionsInContext?: number;
+  aliasMentionsInContext?: number;
+  numberOfRelevantEvidenceAtoms?: number;
+  competingContexts: Array<{ id: string; title: string; confidence: number }>;
+  ambiguous: boolean;
+};
+
+type SecDocumentKind = "FORM 10-K" | "FORM 10-Q" | "FORM 20-F" | "FORM 8-K" | "FORM 4" | "FORM 3" | "FORM 5" | "SEC document";
+
+type RawSourceExcerptOptions = {
+  documentKind?: SecDocumentKind;
+  financeIntent?: boolean;
+  maxExcerpts?: number;
 };
 
 const normalize = (value: string): string => normalizeLookupText(value);
 
 const uniqueStrings = (items: string[]): string[] => Array.from(new Set(items.filter(Boolean)));
+
+const estimateTokens = (value: string): number => Math.ceil((value || "").length / 4);
 
 const truncateText = (value: string, maxChars: number): string => {
   const normalized = value.replace(/\s+/g, " ").trim();
@@ -267,6 +349,93 @@ const splitTerms = (value: string): string[] =>
 
 const normalizedTokens = (value: string): string[] => normalize(value).split(/\s+/).filter(Boolean);
 
+const hasFinanceOrSecIntent = (question: string): boolean =>
+  /\b(?:sec|10-k|10-q|20-f|8-k|s-1|filing|annual report|quarterly report|financial analysis|finance|financial|revenue|income statement|balance sheet|cash flow|ebitda|gross margin|net income|debt|liquidity|assets|liabilities)\b|מסמכי?\s*sec|פיננס|הכנסות|רווח|תזרים|מאזן|חוב|נזילות/i.test(
+    question,
+  );
+
+const detectSecDocumentKind = (rawText = "", title = ""): SecDocumentKind => {
+  const sample = `${title}\n${rawText.slice(0, 30000)}`;
+  if (/\bFORM\s+10-K\b/i.test(sample)) return "FORM 10-K";
+  if (/\bFORM\s+10-Q\b/i.test(sample)) return "FORM 10-Q";
+  if (/\bFORM\s+20-F\b/i.test(sample)) return "FORM 20-F";
+  if (/\bFORM\s+8-K\b/i.test(sample)) return "FORM 8-K";
+  if (/\bFORM\s+4\b/i.test(sample)) return "FORM 4";
+  if (/\bFORM\s+3\b/i.test(sample)) return "FORM 3";
+  if (/\bFORM\s+5\b/i.test(sample)) return "FORM 5";
+  if (/\bSECURITIES AND EXCHANGE COMMISSION\b|\bSEC\b/i.test(sample)) return "SEC document";
+  return "SEC document";
+};
+
+const isFinancialSecReport = (kind: SecDocumentKind): boolean =>
+  kind === "FORM 10-K" || kind === "FORM 10-Q" || kind === "FORM 20-F";
+
+const isOwnershipSecForm = (kind: SecDocumentKind): boolean =>
+  kind === "FORM 3" || kind === "FORM 4" || kind === "FORM 5";
+
+const inferSourceDisplayName = (title: string): string => {
+  if (/amazon/i.test(title)) return "Amazon";
+  if (/apple/i.test(title)) return "Apple";
+  if (/microsoft/i.test(title)) return "Microsoft";
+  const withoutExtension = title.replace(/\.(?:pdf|docx?|txt)$/i, "").trim();
+  return truncateText(withoutExtension || title, 64);
+};
+
+const isDocumentGroundedQuestion = (question: string): boolean =>
+  hasFinanceOrSecIntent(question) ||
+  /\b(?:uploaded|upload|documents|files|filings|reports|source documents|source files)\b|מסמכים|קבצים|דוחות|שהעליתי|העליתי/i.test(
+    question,
+  );
+
+const expandDomainQueryTerms = (question: string, terms: string[]): string[] => {
+  const expanded = [...terms];
+  if (/\b(?:sec|10-k|10-q|20-f|8-k|s-1|filing|annual report|quarterly report)\b|מסמכי?\s*sec/i.test(question)) {
+    expanded.push(
+      "sec",
+      "securities",
+      "exchange",
+      "commission",
+      "form",
+      "10-k",
+      "10-q",
+      "20-f",
+      "8-k",
+      "annual",
+      "quarterly",
+      "filing",
+      "registrant",
+    );
+  }
+  if (hasFinanceOrSecIntent(question)) {
+    expanded.push(
+      "revenue",
+      "income",
+      "cash",
+      "flow",
+      "debt",
+      "liquidity",
+      "assets",
+      "liabilities",
+      "margin",
+      "profit",
+      "loss",
+      "operating",
+      "expenses",
+      "ebitda",
+      "risk",
+      "yoy",
+      "qoq",
+      "הכנסות",
+      "רווח",
+      "תזרים",
+      "מאזן",
+      "חוב",
+      "נזילות",
+    );
+  }
+  return uniqueStrings(expanded.map((term) => normalize(term)).filter(Boolean));
+};
+
 const entityMatchesQueryTerm = (candidate: string, queryTerms: string[]): boolean => {
   const candidateTokens = normalizedTokens(candidate);
   return queryTerms.some((term) => {
@@ -309,11 +478,166 @@ const scoreEvidenceSnippet = (snippet: string, queryTerms: string[], queryPhrase
   return lexicalScore + phraseScore + entityScore;
 };
 
+const countRegexHits = (value: string, patterns: RegExp[]): number =>
+  patterns.reduce((sum, pattern) => sum + (value.match(pattern)?.length || 0), 0);
+
+const FINANCIAL_SECTION_PATTERNS = [
+  /\bitem\s+7\b/gi,
+  /\bmanagement'?s discussion\b/gi,
+  /\bresults of operations\b/gi,
+  /\bliquidity and capital resources\b/gi,
+  /\bconsolidated statements? of (?:operations|cash flows|balance sheets?)\b/gi,
+  /\bselected financial data\b/gi,
+];
+
+const FINANCIAL_METRIC_PATTERNS = [
+  /\bnet sales\b/gi,
+  /\brevenues?\b/gi,
+  /\boperating income\b/gi,
+  /\boperating loss\b/gi,
+  /\bnet income\b/gi,
+  /\bgross margin\b/gi,
+  /\bcash flows?\b/gi,
+  /\boperating cash\b/gi,
+  /\bliquidity\b/gi,
+  /\btotal assets\b/gi,
+  /\btotal liabilities\b/gi,
+  /\bdebt\b/gi,
+  /\bcash and cash equivalents\b/gi,
+  /\bresearch and development\b/gi,
+  /\bcapital expenditures?\b/gi,
+  /\brisk factors?\b/gi,
+];
+
+const OWNERSHIP_FORM_PATTERNS = [
+  /\breporting owner\b/gi,
+  /\bissuer\b/gi,
+  /\btransaction date\b/gi,
+  /\bsecurities acquired\b/gi,
+  /\bsecurities disposed\b/gi,
+  /\bnon-derivative securities\b/gi,
+  /\bbeneficial owner\b/gi,
+];
+
+const GENERIC_SEC_BOILERPLATE_PATTERNS = [
+  /\bunited states securities and exchange commission\b/gi,
+  /\bcommission file number\b/gi,
+  /\btable of contents\b/gi,
+  /\bsignatures?\b/gi,
+  /\bcertification\b/gi,
+];
+
+const hasFinancialNumber = (value: string): boolean =>
+  /(?:\$|USD|\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b|\b\d+(?:\.\d+)?\s*(?:million|billion)\b)/i.test(value);
+
+const scoreRawSourceSegment = (
+  segment: string,
+  index: number,
+  queryTerms: string[],
+  queryPhrases: string[],
+  matchedEntities: string[],
+  options: RawSourceExcerptOptions,
+): number => {
+  const documentKind = options.documentKind || "SEC document";
+  const financeIntent = Boolean(options.financeIntent);
+  let score = scoreEvidenceSnippet(segment, queryTerms, queryPhrases, matchedEntities) + (index === 0 ? 0.15 : 0);
+
+  if (!financeIntent) return score;
+
+  const sectionHits = countRegexHits(segment, FINANCIAL_SECTION_PATTERNS);
+  const metricHits = countRegexHits(segment, FINANCIAL_METRIC_PATTERNS);
+  const ownershipHits = countRegexHits(segment, OWNERSHIP_FORM_PATTERNS);
+  const boilerplateHits = countRegexHits(segment, GENERIC_SEC_BOILERPLATE_PATTERNS);
+
+  if (isFinancialSecReport(documentKind)) {
+    score += sectionHits * 4.5 + metricHits * 2.2 + (hasFinancialNumber(segment) ? 1.1 : 0);
+    score -= Math.min(3, boilerplateHits * 0.8);
+    if (/\bcover page\b|\bexact name of registrant\b|\bindicate by check mark\b/i.test(segment)) score -= 2.2;
+    if (ownershipHits > 0 && metricHits === 0) score -= 2.5;
+  } else if (isOwnershipSecForm(documentKind)) {
+    score += /\bFORM\s+[345]\b/i.test(segment) ? 4.5 : 0;
+    score += ownershipHits * 1.6;
+    score += /\bAmazon|Apple|Microsoft|issuer\b/i.test(segment) ? 0.8 : 0;
+    score -= metricHits > 0 ? 0 : 0.4;
+  } else {
+    score += metricHits * 1.8 + sectionHits * 2.5 + (hasFinancialNumber(segment) ? 0.8 : 0);
+    score -= Math.min(2.2, boilerplateHits * 0.7);
+  }
+
+  return score;
+};
+
+const splitRawSourceSegments = (rawText: string): string[] => {
+  const normalized = rawText.replace(/\r/g, "").replace(/[ \t\u00A0]+/g, " ").trim();
+  if (!normalized) return [];
+
+  const paragraphSegments = normalized
+    .split(/\n{2,}/)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length >= 40);
+  const sourceSegments = paragraphSegments.length
+    ? paragraphSegments
+    : normalized
+        .split(/(?<=[.!?])\s+(?=[A-Z0-9"$€₪])/)
+        .map((segment) => segment.trim())
+        .filter((segment) => segment.length >= 40);
+
+  const chunks: string[] = [];
+  sourceSegments.forEach((segment) => {
+    if (segment.length <= MAX_RAW_SOURCE_EXCERPT_CHARS) {
+      chunks.push(segment);
+      return;
+    }
+    for (let offset = 0; offset < segment.length; offset += MAX_RAW_SOURCE_EXCERPT_CHARS) {
+      const chunk = segment.slice(offset, offset + MAX_RAW_SOURCE_EXCERPT_CHARS).trim();
+      if (chunk.length >= 40) chunks.push(chunk);
+    }
+  });
+  return chunks.slice(0, MAX_RAW_SOURCE_SEGMENTS);
+};
+
+const pickRawSourceExcerpts = (
+  rawText: string | undefined,
+  queryTerms: string[],
+  queryPhrases: string[],
+  matchedEntities: string[],
+  options: RawSourceExcerptOptions = {},
+): string[] => {
+  if (!rawText?.trim()) return [];
+  const segments = splitRawSourceSegments(rawText);
+  if (!segments.length) return [];
+
+  const documentKind = options.documentKind || detectSecDocumentKind(rawText);
+  const maxExcerpts = Math.max(
+    1,
+    Math.min(
+      options.maxExcerpts || MAX_RAW_SOURCE_EXCERPTS,
+      options.financeIntent && isOwnershipSecForm(documentKind) ? 1 : MAX_RAW_SOURCE_EXCERPTS,
+    ),
+  );
+  const ranked = segments
+    .map((segment, index) => ({
+      segment,
+      score: scoreRawSourceSegment(segment, index, queryTerms, queryPhrases, matchedEntities, {
+        ...options,
+        documentKind,
+      }),
+    }))
+    .sort((left, right) => right.score - left.score);
+  const relevant = ranked.filter((entry) => entry.score > 0.15);
+  const selected = relevant.length ? relevant : ranked.slice(0, 1);
+
+  return selected
+    .slice(0, maxExcerpts)
+    .map((entry) => truncateText(entry.segment, MAX_RAW_SOURCE_EXCERPT_CHARS));
+};
+
 const pickEvidencePreview = (
   study: StudyItem,
   queryTerms: string[],
   queryPhrases: string[],
   matchedEntities: string[],
+  financeIntent = false,
 ): string[] => {
   const entityEvidence = (study.intelligence.entities || [])
     .filter((entity) => matchedEntities.some((name) => isEntityMatch(name, entity.name)))
@@ -336,12 +660,23 @@ const pickEvidencePreview = (
 
   const summaryFindings = Object.values(study.intelligence.summary_panels || {})
     .flatMap((panel) => summarizePanel(panel));
+  const rawSourceExcerpts = pickRawSourceExcerpts(
+    study.intelligence.raw_text,
+    queryTerms,
+    queryPhrases,
+    matchedEntities,
+    {
+      documentKind: detectSecDocumentKind(study.intelligence.raw_text || study.intelligence.clean_text || "", study.title),
+      financeIntent,
+    },
+  );
 
   const evidence = uniqueStrings([
     ...entityEvidence,
     ...retrievalHits
       .sort((left, right) => right.score - left.score)
       .map((entry) => entry.snippet),
+    ...rawSourceExcerpts,
     ...summaryFindings,
     ...(study.intelligence.research_dossier?.pressure_points || []),
     study.intelligence.clean_text,
@@ -369,7 +704,7 @@ const buildStudySearchText = (study: StudyItem): string => {
     study.date,
     study.source,
     pkg.clean_text,
-    pkg.raw_text?.slice(0, 5000) || "",
+    pkg.raw_text?.slice(0, 12000) || "",
     ...(pkg.entities || []).flatMap((entity) => [entity.name, ...(entity.aliases || [])]),
     ...(pkg.insights || []).map((insight) => insight.text),
     ...(pkg.intel_questions || []).map((question) => question.question_text),
@@ -394,8 +729,98 @@ const computeFallbackPriority = (study: StudyItem): number => {
   return reliability * 2.2 + openQuestions * 0.12 + openTasks * 0.16 + watchlistHits * 0.3 + relationDensity + recency * 0.4;
 };
 
+const countMentionMatches = (study: StudyItem, names: string[]): { exact: number; alias: number } => {
+  if (!names.length) return { exact: 0, alias: 0 };
+  const haystack = normalize(buildStudySearchText(study));
+  let exact = 0;
+  let alias = 0;
+  names.forEach((name, index) => {
+    const normalizedName = normalize(name);
+    if (!normalizedName || normalizedName.length < 3) return;
+    const hitCount = haystack.split(normalizedName).length - 1;
+    if (index === 0) exact += Math.max(0, hitCount);
+    else alias += Math.max(0, hitCount);
+  });
+  return { exact, alias };
+};
+
+const countRelevantEvidenceAtoms = (study: StudyItem, matchedEntities: string[]): number => {
+  const retrievalHits = Object.values(study.intelligence.retrieval_artifacts?.bundles || {})
+    .flatMap((bundle) => bundle.hits)
+    .filter((hit) => !hit.reference_only)
+    .filter(
+      (hit) =>
+        matchedEntities.some((entity) => (hit.related_entities || []).some((related) => isEntityMatch(related, entity))) ||
+        matchedEntities.some((entity) => normalize(hit.snippet).includes(normalize(entity))),
+    );
+  const statements = (study.intelligence.statements || []).filter((statement) =>
+    (statement.related_entities || []).some((entity) => matchedEntities.some((matched) => isEntityMatch(entity, matched))),
+  );
+  const entityEvidence = (study.intelligence.entities || []).filter((entity) =>
+    matchedEntities.some((matched) => isEntityMatch(entity.name, matched) || (entity.aliases || []).some((alias) => isEntityMatch(alias, matched))),
+  );
+  const contextCardEvidence = Object.entries(study.intelligence.context_cards || {}).filter(([name]) =>
+    matchedEntities.some((matched) => isEntityMatch(name, matched)),
+  );
+  return retrievalHits.length + statements.length + entityEvidence.length + contextCardEvidence.length;
+};
+
+const computeActiveContextConfidence = (
+  study: StudyItem,
+  exactEntityMatches: string[],
+  entityTermMatches: string[],
+  evidencePreview: string[],
+  phraseMatches: string[],
+  queryEntityMentions: number,
+  aliasMentions: number,
+  relevantEvidenceAtoms: number,
+  relevantClusterDensity: number,
+): { confidence: number; reason: string } => {
+  const reasons: string[] = [];
+  let score = 0;
+
+  if (exactEntityMatches.length > 0) {
+    score += 0.42;
+    reasons.push("exact entity match");
+  }
+  if (entityTermMatches.length > 0) {
+    score += 0.24;
+    reasons.push("entity or alias term match");
+  }
+  if (queryEntityMentions >= 2) {
+    score += 0.24;
+    reasons.push("multiple direct mentions");
+  }
+  if (aliasMentions >= 2) {
+    score += 0.12;
+    reasons.push("multiple alias mentions");
+  }
+  if (relevantEvidenceAtoms >= 2) {
+    score += 0.14;
+    reasons.push("multiple relevant evidence atoms");
+  }
+  if (relevantClusterDensity >= 1.5) {
+    score += 0.1;
+    reasons.push("high relevant cluster density");
+  }
+  if (entityTermMatches.length > 0 && evidencePreview.length > 0) {
+    score += 0.08;
+    reasons.push("entity-grounded evidence preview");
+  }
+  if (phraseMatches.length > 0) {
+    score += 0.06;
+    reasons.push("query phrase overlap");
+  }
+  score += Math.min(0.08, parseDateWeight(study.date) * 0.08);
+
+  return {
+    confidence: Number(Math.min(0.99, score).toFixed(2)),
+    reason: reasons.join(", ") || "weak matched signals only",
+  };
+};
+
 const scoreStudy = (question: string, study: StudyItem): ScoredStudy => {
-  const queryTerms = splitTerms(question);
+  const queryTerms = expandDomainQueryTerms(question, splitTerms(question));
   const queryPhrases = extractQueryPhrases(question);
   const haystack = normalize(buildStudySearchText(study));
   const pkg = study.intelligence;
@@ -433,8 +858,24 @@ const scoreStudy = (question: string, study: StudyItem): ScoredStudy => {
 
   const allEntityMatches = uniqueStrings([...exactEntityMatches, ...entityTermMatches, ...matchedEntities]);
   const matchedEntityCount = allEntityMatches.length;
-  const evidencePreview = pickEvidencePreview(study, queryTerms, queryPhrases, allEntityMatches);
+  const financeIntent = hasFinanceOrSecIntent(question);
+  const evidencePreview = pickEvidencePreview(study, queryTerms, queryPhrases, allEntityMatches, financeIntent);
   const evidenceBoost = evidencePreview.some((item) => queryTerms.some((term) => normalize(item).includes(term))) ? 0.18 : 0;
+  const mentionCounts = countMentionMatches(study, allEntityMatches);
+  const relevantEvidenceAtoms = countRelevantEvidenceAtoms(study, allEntityMatches);
+  const relevantClusterDensity = Number(
+    (
+      Object.values(pkg.retrieval_artifacts?.bundles || {}).filter((bundle) =>
+        bundle.hits.some((hit) =>
+          allEntityMatches.some(
+            (entity) =>
+              (hit.related_entities || []).some((related) => isEntityMatch(related, entity)) ||
+              normalize(hit.snippet).includes(normalize(entity)),
+          ),
+        ),
+      ).length || 0
+    ).toFixed(2),
+  );
 
   const textMatchedEntities = (pkg.entities || [])
     .filter((entity) =>
@@ -473,6 +914,17 @@ const scoreStudy = (question: string, study: StudyItem): ScoredStudy => {
         exactEntityMatches.length * 1.75 +
         evidenceBoost +
         fallbackPriority * 0.08;
+  const activeContext = computeActiveContextConfidence(
+    study,
+    exactEntityMatches,
+    entityTermMatches,
+    evidencePreview,
+    phraseMatches,
+    mentionCounts.exact,
+    mentionCounts.alias,
+    relevantEvidenceAtoms,
+    relevantClusterDensity,
+  );
 
   return {
     study,
@@ -482,39 +934,202 @@ const scoreStudy = (question: string, study: StudyItem): ScoredStudy => {
     exactEntityMatches,
     entityTermMatches,
     phraseMatches,
+    matchedTerms,
+    lexicalScore,
+    queryEntityMentions: mentionCounts.exact,
+    aliasMentions: mentionCounts.alias,
+    relevantEvidenceAtoms,
+    relevantClusterDensity,
+    activeContextConfidence: activeContext.confidence,
+    activeContextReason: activeContext.reason,
   };
 };
 
-const chooseStudies = (question: string, studies: StudyItem[], selectedStudyIds?: string[]): ScoredStudy[] => {
+const chooseStudies = (question: string, studies: StudyItem[], selectedStudyIds?: string[]): StudySelectionResult => {
   const scopedStudies =
     selectedStudyIds && selectedStudyIds.length > 0
       ? studies.filter((study) => selectedStudyIds.includes(study.id))
       : studies;
 
   const scored = scopedStudies.map((study) => scoreStudy(question, study)).sort((left, right) => right.relevance - left.relevance);
+  const documentGroundedQuestion = isDocumentGroundedQuestion(question);
+  const maxSelectedStudies =
+    selectedStudyIds && selectedStudyIds.length > 0
+      ? MAX_SELECTED_STUDIES
+      : isGlobalDbSearchQuery(question) || documentGroundedQuestion
+        ? MAX_SELECTED_STUDIES
+        : 1;
+  const competingContexts = scored.slice(0, 3).map((entry) => ({
+    id: entry.study.id,
+    title: entry.study.title,
+    confidence: entry.activeContextConfidence,
+  }));
+  const top = scored[0];
+  const runnerUp = scored[1];
+
+  if (documentGroundedQuestion && !selectedStudyIds?.length && !isGlobalDbSearchQuery(question)) {
+    const documentGrounded = scored.filter(
+      (entry) =>
+        entry.lexicalScore >= 0.16 ||
+        entry.matchedTerms.length >= 2 ||
+        entry.phraseMatches.length > 0 ||
+        entry.evidencePreview.some((snippet) => splitTerms(question).some((term) => normalize(snippet).includes(term))),
+    );
+
+    if (documentGrounded.length > 0) {
+      const selectedGrounded = documentGrounded.slice(0, maxSelectedStudies);
+      const best = selectedGrounded[0];
+      return {
+        selected: selectedGrounded,
+        activeContextId: best.study.id,
+        activeContextReason: "document/source text grounding",
+        activeContextConfidence: Math.max(best.activeContextConfidence, Math.min(0.94, 0.68 + best.lexicalScore * 0.24)),
+        queryEntityMentionsInContext: best.queryEntityMentions,
+        aliasMentionsInContext: best.aliasMentions,
+        numberOfRelevantEvidenceAtoms: best.relevantEvidenceAtoms,
+        competingContexts,
+        ambiguous: false,
+      };
+    }
+
+    return {
+      selected: [],
+      activeContextId: undefined,
+      activeContextReason: "no database record matched the document/source text question",
+      activeContextConfidence: 0,
+      queryEntityMentionsInContext: 0,
+      aliasMentionsInContext: 0,
+      numberOfRelevantEvidenceAtoms: 0,
+      competingContexts,
+      ambiguous: true,
+    };
+  }
+
+  const ambiguous =
+    !selectedStudyIds?.length &&
+    !isGlobalDbSearchQuery(question) &&
+    (!top ||
+      top.activeContextConfidence < 0.62 ||
+      (runnerUp &&
+        runnerUp.activeContextConfidence >= 0.58 &&
+        Math.abs(top.activeContextConfidence - runnerUp.activeContextConfidence) < 0.08 &&
+        runnerUp.queryEntityMentions >= top.queryEntityMentions));
+
+  if (selectedStudyIds && selectedStudyIds.length > 0) {
+    return {
+      selected: scored.slice(0, MAX_SELECTED_STUDIES),
+      activeContextId: scored[0]?.study.id,
+      activeContextReason: "explicit selected report/case scope",
+      activeContextConfidence: 0.99,
+      queryEntityMentionsInContext: scored[0]?.queryEntityMentions || 0,
+      aliasMentionsInContext: scored[0]?.aliasMentions || 0,
+      numberOfRelevantEvidenceAtoms: scored[0]?.relevantEvidenceAtoms || 0,
+      competingContexts,
+      ambiguous: false,
+    };
+  }
+
+  if (ambiguous) {
+    // Return the top-scoring study rather than nothing — downstream warns about low confidence
+    // but an empty corpus guarantees a useless "No scoped database text available" response.
+    return {
+      selected: top ? [top] : [],
+      activeContextId: top?.study.id,
+      activeContextReason: top?.activeContextReason || "weak matched signals only",
+      activeContextConfidence: top?.activeContextConfidence || 0,
+      queryEntityMentionsInContext: top?.queryEntityMentions || 0,
+      aliasMentionsInContext: top?.aliasMentions || 0,
+      numberOfRelevantEvidenceAtoms: top?.relevantEvidenceAtoms || 0,
+      competingContexts,
+      ambiguous: true,
+    };
+  }
+
   const exactEntityMatches = scored.filter((entry) => entry.exactEntityMatches.length > 0);
   if (exactEntityMatches.length > 0) {
-    return exactEntityMatches.slice(0, MAX_SELECTED_STUDIES);
+    return {
+      selected: exactEntityMatches.slice(0, maxSelectedStudies),
+      activeContextId: exactEntityMatches[0]?.study.id,
+      activeContextReason: exactEntityMatches[0]?.activeContextReason,
+      activeContextConfidence: exactEntityMatches[0]?.activeContextConfidence,
+      queryEntityMentionsInContext: exactEntityMatches[0]?.queryEntityMentions,
+      aliasMentionsInContext: exactEntityMatches[0]?.aliasMentions,
+      numberOfRelevantEvidenceAtoms: exactEntityMatches[0]?.relevantEvidenceAtoms,
+      competingContexts,
+      ambiguous: false,
+    };
   }
 
   const phraseMatches = scored.filter((entry) => entry.phraseMatches.length > 0);
   if (phraseMatches.length > 0) {
-    return phraseMatches.slice(0, MAX_SELECTED_STUDIES);
+    return {
+      selected: phraseMatches.slice(0, maxSelectedStudies),
+      activeContextId: phraseMatches[0]?.study.id,
+      activeContextReason: phraseMatches[0]?.activeContextReason,
+      activeContextConfidence: phraseMatches[0]?.activeContextConfidence,
+      queryEntityMentionsInContext: phraseMatches[0]?.queryEntityMentions,
+      aliasMentionsInContext: phraseMatches[0]?.aliasMentions,
+      numberOfRelevantEvidenceAtoms: phraseMatches[0]?.relevantEvidenceAtoms,
+      competingContexts,
+      ambiguous: false,
+    };
   }
 
   const entityTermMatches = scored.filter((entry) => entry.entityTermMatches.length > 0);
   if (entityTermMatches.length > 0) {
-    return entityTermMatches.slice(0, MAX_SELECTED_STUDIES);
+    return {
+      selected: entityTermMatches.slice(0, maxSelectedStudies),
+      activeContextId: entityTermMatches[0]?.study.id,
+      activeContextReason: entityTermMatches[0]?.activeContextReason,
+      activeContextConfidence: entityTermMatches[0]?.activeContextConfidence,
+      queryEntityMentionsInContext: entityTermMatches[0]?.queryEntityMentions,
+      aliasMentionsInContext: entityTermMatches[0]?.aliasMentions,
+      numberOfRelevantEvidenceAtoms: entityTermMatches[0]?.relevantEvidenceAtoms,
+      competingContexts,
+      ambiguous: false,
+    };
   }
 
-  if (scored.length <= MAX_SELECTED_STUDIES) return scored;
+  if (scored.length <= maxSelectedStudies) {
+    return {
+      selected: scored,
+      activeContextId: top?.study.id,
+      activeContextReason: top?.activeContextReason,
+      activeContextConfidence: top?.activeContextConfidence,
+      queryEntityMentionsInContext: top?.queryEntityMentions,
+      aliasMentionsInContext: top?.aliasMentions,
+      numberOfRelevantEvidenceAtoms: top?.relevantEvidenceAtoms,
+      competingContexts,
+      ambiguous: false,
+    };
+  }
 
   const positive = scored.filter((entry) => entry.relevance > 0.22);
   if (positive.length >= 3) {
-    return positive.slice(0, MAX_SELECTED_STUDIES);
+    return {
+      selected: positive.slice(0, maxSelectedStudies),
+      activeContextId: positive[0]?.study.id,
+      activeContextReason: positive[0]?.activeContextReason,
+      activeContextConfidence: positive[0]?.activeContextConfidence,
+      queryEntityMentionsInContext: positive[0]?.queryEntityMentions,
+      aliasMentionsInContext: positive[0]?.aliasMentions,
+      numberOfRelevantEvidenceAtoms: positive[0]?.relevantEvidenceAtoms,
+      competingContexts,
+      ambiguous: false,
+    };
   }
 
-  return scored.slice(0, MAX_SELECTED_STUDIES);
+  return {
+    selected: scored.slice(0, maxSelectedStudies),
+    activeContextId: top?.study.id,
+    activeContextReason: top?.activeContextReason,
+    activeContextConfidence: top?.activeContextConfidence,
+    queryEntityMentionsInContext: top?.queryEntityMentions,
+    aliasMentionsInContext: top?.aliasMentions,
+    numberOfRelevantEvidenceAtoms: top?.relevantEvidenceAtoms,
+    competingContexts,
+    ambiguous: false,
+  };
 };
 
 const preferEntityType = (currentType: string, nextType: string): string => {
@@ -927,6 +1542,16 @@ const averageReliability = (studies: StudyItem[]): number => {
   return Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(2));
 };
 
+const inferScopeResearchProfile = (studies: StudyItem[]): ResearchProfileId | undefined => {
+  const counts = new Map<ResearchProfileId, number>();
+  studies.forEach((study) => {
+    const profile = study.intelligence.research_profile;
+    if (!profile) return;
+    counts.set(profile, (counts.get(profile) || 0) + 1);
+  });
+  return Array.from(counts.entries()).sort((left, right) => right[1] - left[1])[0]?.[0];
+};
+
 const buildDeterministicFallbackNotice = (
   isHebrew: boolean,
   engineSurface: ReasoningEngineSurface,
@@ -969,6 +1594,458 @@ const buildLiveResearchEngineTrace = (
 const answerCitesSelectedEvidence = (answerText: string, evidenceIds: string[]): boolean => {
   if (!evidenceIds.length) return false;
   return evidenceIds.some((evidenceId) => answerText.includes(`[${evidenceId}]`) || answerText.includes(evidenceId));
+};
+
+const LIVE_RESEARCH_DB_ONLY_SYSTEM_INSTRUCTION =
+  "You are TEVEL's database research copilot. Answer strictly and only from the provided database records, scoped evidence, and retrieved snippets. Treat the selected DB scope as the complete world for this answer. If the answer is not present in the scoped database material, say that it was not found in the selected DB scope. Do not use outside knowledge, prior model knowledge, or generic background information. Cite evidence IDs in square brackets when available. Be concise and direct.";
+
+type OutputExclusion = "FCF" | "timeline" | "entity" | "confidence" | "communicated_with";
+
+type LiveResearchOutputConstraints = {
+  exclusions: OutputExclusion[];
+  hebrewOnly: boolean;
+  plainLanguage: boolean;
+  suppressEvidenceIds: boolean;
+  suppressSystemCodes: boolean;
+};
+
+const OUTPUT_EXCLUSION_PATTERNS: Array<{ label: OutputExclusion; patterns: RegExp[] }> = [
+  { label: "FCF", patterns: [/\bfcf(?:-r3)?\b/i] },
+  { label: "timeline", patterns: [/\btimelines?\b/i, /ציר\s*זמן/i] },
+  { label: "entity", patterns: [/\b(?:entity|entities)\b/i, /ישות|ישויות/i] },
+  { label: "confidence", patterns: [/\bconfidence\b/i, /ביטחון|רמת\s+ודאות/i] },
+  { label: "communicated_with", patterns: [/\bcommunicated[_\s-]?with\b/i] },
+];
+
+const OUTPUT_EXCLUSION_CUE =
+  /\b(?:do\s+not|don't|dont|without|exclude|avoid|no|forbid|forbidden)\b|אסור|בלי|ללא|אל\s+ת|לא\s+(?:לכלול|להחזיר|להציג|להשתמש|להזכיר)/i;
+
+const detectOutputExclusions = (question: string): OutputExclusion[] => {
+  if (!OUTPUT_EXCLUSION_CUE.test(question)) return [];
+  return OUTPUT_EXCLUSION_PATTERNS
+    .filter((entry) => entry.patterns.some((pattern) => pattern.test(question)))
+    .map((entry) => entry.label);
+};
+
+const detectOutputConstraints = (question: string): LiveResearchOutputConstraints => ({
+  exclusions: detectOutputExclusions(question),
+  hebrewOnly: /עברית|בעברית|hebrew/i.test(question),
+  plainLanguage: /עברית פשוטה|שפה פשוטה|פשוטה בלבד|plain (?:hebrew|language)|simple language/i.test(question),
+  suppressEvidenceIds:
+    /\b(?:no|without|do\s+not|don't|dont)\s+(?:evidence\s+)?ids?\b|בלי\s+מזהי\s+ראיות|ללא\s+מזהי\s+ראיות|בלי\s+ids?|בלי\s+מזהים/i.test(
+      question,
+    ),
+  suppressSystemCodes:
+    /\b(?:no|without|do\s+not|don't|dont)\s+system\s+codes?\b|בלי\s+קודי\s+מערכת|ללא\s+קודי\s+מערכת|בלי\s+קודים/i.test(
+      question,
+    ),
+});
+
+const shouldUseSourceGroundedAnswer = (question: string, corpus: LiveResearchCorpus): boolean =>
+  detectOutputConstraints(question).exclusions.length > 0 ||
+  hasFinanceOrSecIntent(question) ||
+  corpus.package.research_profile === "FINANCE";
+
+type SourceGroundedEvidenceItem = {
+  id: string;
+  sourceId: string;
+  sourceTitle: string;
+  sourceDisplayName: string;
+  documentKind: SecDocumentKind;
+  text: string;
+};
+
+type SourceGroundedSourceSummary = {
+  id: string;
+  title: string;
+  displayName: string;
+  documentKind: SecDocumentKind;
+  analysisRole: "financial-report" | "ownership-form" | "sec-context";
+  rawChars: number;
+};
+
+type SourceGroundedReadPath = {
+  knowledgeSnapshot: string;
+  retrievalContext: string;
+  evidenceIds: string[];
+  evidenceItems: SourceGroundedEvidenceItem[];
+  sourceSummaries: SourceGroundedSourceSummary[];
+};
+
+const buildSourceGroundedSystemInstruction = (question: string, constraints: LiveResearchOutputConstraints): string => {
+  const exclusionRule = constraints.exclusions.length
+    ? `The user explicitly excluded these output terms or structures: ${constraints.exclusions.join(", ")}. Do not include those terms, headings, relation labels, or sections in the answer.`
+    : "Do not switch into graph, entity-list, relationship, or chronology mode unless the user explicitly asks for that output.";
+  const financeRule = hasFinanceOrSecIntent(question)
+    ? "For SEC or financial-document questions, first classify each selected filing by SEC form. Treat Form 10-K, 10-Q, and 20-F as financial reports. Treat Form 3, 4, and 5 as ownership or insider-transaction forms; do not use them as evidence for revenue, profitability, cash flow, balance sheet, debt, or liquidity. When multiple company records are selected, cover each company once before giving conclusions, and do not repeat one filing."
+    : "Answer in the user's requested analysis frame and keep the answer tied to the selected source excerpts.";
+  const languageRule = constraints.hebrewOnly
+    ? constraints.plainLanguage
+      ? "Answer in simple Hebrew only. Do not use English headings, internal labels, or technical framework names."
+      : "Answer in Hebrew only."
+    : "Answer in the user's language.";
+  const citationRule =
+    constraints.suppressEvidenceIds || constraints.suppressSystemCodes
+      ? "Do not output source IDs, evidence IDs, bracketed IDs, run IDs, route names, system codes, or internal labels. Refer to records only by company or document name."
+      : "Cite source excerpt IDs in square brackets when useful.";
+
+  return [
+    "You are TEVEL's source-grounded document analysis copilot.",
+    "Use only the selected DB records and source excerpts provided in the prompt. Treat that scoped material as the complete world.",
+    languageRule,
+    financeRule,
+    exclusionRule,
+    "If the selected excerpts do not contain enough evidence to answer, say what is missing and stop. Do not fill gaps from outside knowledge.",
+    citationRule,
+    "Be concise and direct.",
+  ].join(" ");
+};
+
+const buildSourceGroundedReadPath = (
+  question: string,
+  corpus: LiveResearchCorpus,
+  studies: StudyItem[],
+  maxContextChars: number,
+  constraints: LiveResearchOutputConstraints = detectOutputConstraints(question),
+): SourceGroundedReadPath => {
+  const queryTerms = expandDomainQueryTerms(question, splitTerms(question));
+  const queryPhrases = extractQueryPhrases(question);
+  const financeIntent = hasFinanceOrSecIntent(question);
+  const evidenceItems: SourceGroundedEvidenceItem[] = [];
+  const sourceSummaries: SourceGroundedSourceSummary[] = [];
+
+  corpus.sources.forEach((source) => {
+    const study = studies.find((candidate) => candidate.id === source.id);
+    const rawText = study?.intelligence.raw_text || study?.intelligence.clean_text || "";
+    const documentKind = detectSecDocumentKind(rawText, source.title);
+    const analysisRole = isFinancialSecReport(documentKind)
+      ? "financial-report"
+      : isOwnershipSecForm(documentKind)
+        ? "ownership-form"
+        : "sec-context";
+    const sourceDisplayName = inferSourceDisplayName(source.title);
+    const maxSourceExcerpts = financeIntent && analysisRole === "ownership-form" ? 1 : MAX_RAW_SOURCE_EXCERPTS;
+    sourceSummaries.push({
+      id: source.id,
+      title: source.title,
+      displayName: sourceDisplayName,
+      documentKind,
+      analysisRole,
+      rawChars: rawText.length,
+    });
+    const matchedEntities = matchedEntitiesForSource(source, study || ({ intelligence: corpus.package } as StudyItem)).map((entity) => entity.name);
+    const rawSourceExcerpts = pickRawSourceExcerpts(rawText, queryTerms, queryPhrases, matchedEntities, {
+      documentKind,
+      financeIntent,
+      maxExcerpts: maxSourceExcerpts,
+    });
+    const sourceExcerpts = uniqueStrings(
+      financeIntent
+        ? [
+            ...rawSourceExcerpts,
+            ...source.evidencePreview,
+            study?.intelligence.clean_text || "",
+          ]
+        : [
+            ...source.evidencePreview,
+            ...rawSourceExcerpts,
+            study?.intelligence.clean_text || "",
+          ],
+    ).filter(Boolean);
+
+    sourceExcerpts.slice(0, maxSourceExcerpts).forEach((text, index) => {
+      const id = constraints.suppressEvidenceIds || constraints.suppressSystemCodes
+        ? `${source.title} excerpt ${index + 1}`
+        : `SRC-${stableHash(`${source.id}:${index}:${text}`)}`;
+      evidenceItems.push({
+        id,
+        sourceId: source.id,
+        sourceTitle: source.title,
+        sourceDisplayName,
+        documentKind,
+        text: truncateText(text, MAX_RAW_SOURCE_EXCERPT_CHARS),
+      });
+    });
+  });
+
+  const retrievalContext = [
+    "SOURCE-GROUNDED DB CONTEXT",
+    `Question: ${question}`,
+    "",
+    ...corpus.sources.map((source) => {
+      const sourceEvidence = evidenceItems.filter((item) => item.sourceTitle === source.title);
+      const sourceSummary = sourceSummaries.find((summary) => summary.id === source.id);
+      const ownershipNote =
+        sourceSummary?.analysisRole === "ownership-form"
+          ? "ANALYSIS NOTE: This SEC filing is an ownership or insider-transaction form. It is not a full financial statement filing."
+          : "";
+      return [
+        `DB RECORD: ${source.title}`,
+        `COMPANY_OR_RECORD: ${sourceSummary?.displayName || source.title}`,
+        `SEC_FORM: ${sourceSummary?.documentKind || "SEC document"} | ROLE: ${sourceSummary?.analysisRole || "sec-context"}`,
+        `DATE: ${source.date} | SOURCE: ${source.source} | RELEVANCE: ${formatPercent(source.relevance)}`,
+        ownershipNote,
+        sourceEvidence.length
+          ? sourceEvidence
+              .map((item, index) =>
+                constraints.suppressEvidenceIds || constraints.suppressSystemCodes
+                  ? `Excerpt ${index + 1}: ${item.text}`
+                  : `[${item.id}] ${item.text}`,
+              )
+              .join("\n\n")
+          : "No source excerpt survived selection for this record.",
+      ].join("\n");
+    }),
+  ]
+    .join("\n\n")
+    .slice(0, maxContextChars);
+
+  const profileLabel = corpus.package.research_profile || "mixed";
+  const knowledgeSnapshot = [
+    "SOURCE-GROUNDED DB SNAPSHOT",
+    `records=${corpus.sources.length}/${corpus.scope.scopedStudies}`,
+    `profile=${profileLabel}`,
+    constraints.exclusions.length ? `explicit_output_exclusions=${constraints.exclusions.join(",")}` : "",
+    constraints.hebrewOnly ? "answer_language=hebrew" : "",
+    constraints.suppressEvidenceIds || constraints.suppressSystemCodes ? "output_ids=suppressed" : "",
+    `source_excerpt_count=${evidenceItems.length}`,
+    `sec_forms=${sourceSummaries.map((summary) => `${summary.displayName}:${summary.documentKind}`).join(";")}`,
+    corpus.scope.active_context_reason ? `scope_reason=${corpus.scope.active_context_reason}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return {
+    knowledgeSnapshot,
+    retrievalContext,
+    evidenceIds: evidenceItems.map((item) => item.id),
+    evidenceItems,
+    sourceSummaries,
+  };
+};
+
+const summarizeFinancialSignals = (text: string): string[] => {
+  const signals: string[] = [];
+  if (/\b(?:net sales|revenues?|sales)\b/i.test(text)) signals.push("הכנסות או מכירות");
+  if (/\b(?:operating income|net income|gross margin|income before taxes|earnings)\b/i.test(text)) signals.push("רווחיות");
+  if (/\b(?:cash flows?|operating cash|liquidity|cash and cash equivalents)\b/i.test(text)) signals.push("תזרים ונזילות");
+  if (/\b(?:total assets|total liabilities|balance sheets?|debt)\b/i.test(text)) signals.push("מאזן וחוב");
+  if (/\b(?:risk factors?|risks?|competition|supply|regulatory)\b/i.test(text)) signals.push("סיכונים עסקיים");
+  if (/\b(?:research and development|capital expenditures?|cloud|services|products)\b/i.test(text)) signals.push("מנועי פעילות והשקעה");
+  return uniqueStrings(signals).slice(0, 5);
+};
+
+const buildSourceGroundedFallbackAnswer = (
+  question: string,
+  readPath: SourceGroundedReadPath,
+  engineTrace: LiveResearchEngineTrace,
+  _constraints: LiveResearchOutputConstraints = detectOutputConstraints(question),
+): string => {
+  const hebrew = /[\u0590-\u05FF]/u.test(question);
+  const sourceLines = readPath.sourceSummaries.map((summary) => {
+    const sourceText = readPath.evidenceItems
+      .filter((item) => item.sourceId === summary.id)
+      .map((item) => item.text)
+      .join(" ");
+    const signals = summarizeFinancialSignals(sourceText);
+
+    if (hebrew) {
+      if (summary.analysisRole === "ownership-form") {
+        return `- ${summary.displayName}: זה ${summary.documentKind}. זה טופס על שינוי החזקה או עסקת ניירות ערך, לא דוח כספי מלא, ולכן הוא לא מספיק לניתוח הכנסות, רווחיות, תזרים או מאזן.`;
+      }
+      const signalText = signals.length
+        ? `הקטעים שנבחרו מאפשרים לבדוק בעיקר ${signals.join(", ")}.`
+        : "בקטעים שנבחרו לא נמצאו מספיק נתונים מספריים ברורים לניתוח כספי מלא.";
+      return `- ${summary.displayName}: זה ${summary.documentKind}. ${signalText}`;
+    }
+
+    if (summary.analysisRole === "ownership-form") {
+      return `- ${summary.displayName}: ${summary.documentKind}. This is an ownership or securities-transaction form, not a full financial filing, so it cannot support revenue, profitability, cash-flow, or balance-sheet analysis.`;
+    }
+    const signalText = signals.length
+      ? `Selected excerpts support review of ${signals.join(", ")}.`
+      : "The selected excerpts do not contain enough clear numeric financial data for a full analysis.";
+    return `- ${summary.displayName}: ${summary.documentKind}. ${signalText}`;
+  });
+
+  if (hebrew) {
+    const opening = engineTrace.failureMessage
+      ? "הוחזרה תשובה מצומצמת מתוך קטעי המקור שנבחרו בלבד."
+      : "הניתוח מבוסס רק על קטעי המקור שנבחרו מהמסמכים שהועלו.";
+    const conclusion = readPath.sourceSummaries.some((summary) => summary.analysisRole === "ownership-form")
+      ? "המסקנה העיקרית: צריך להפריד בין דוחות כספיים מלאים לבין טופסי בעלות. Apple ו-Microsoft יכולים לשמש בסיס לניתוח כספי אם הם דוחות 10-K או דוח כספי דומה; Amazon כאן מוגבל אם המסמך שלו הוא Form 4."
+      : "המסקנה העיקרית: אפשר להמשיך לניתוח כספי רק מתוך המדדים שמופיעים בקטעים שנבחרו, בלי להשלים מידע מבחוץ.";
+
+    return [
+      opening,
+      sourceLines.length ? sourceLines.join("\n") : "לא נמצאו קטעי מקור מספיקים במסגרת ה-DB שנבחרה.",
+      conclusion,
+    ].join("\n\n");
+  }
+
+  return [
+    engineTrace.failureMessage
+      ? "A narrow source-grounded fallback was returned from the selected excerpts only."
+      : "This analysis is based only on the selected source excerpts.",
+    sourceLines.length ? sourceLines.join("\n") : "No sufficient source excerpts were found inside the selected DB scope.",
+    "A complete financial analysis requires the selected records to contain revenue, profitability, cash flow, balance sheet, debt, liquidity, and risk data.",
+  ].join("\n\n");
+};
+
+const rawCharsForSources = (sources: LiveResearchSource[], studies: StudyItem[]): number =>
+  sources.reduce((sum, source) => {
+    const study = studies.find((candidate) => candidate.id === source.id);
+    return sum + (study?.intelligence.raw_text?.length || study?.intelligence.clean_text?.length || 0);
+  }, 0);
+
+const makeTokenBenchmark = (
+  route: LiveResearchTokenBenchmark["route"],
+  corpus: LiveResearchCorpus,
+  studies: StudyItem[],
+  params: {
+    selectedContext: string;
+    systemInstruction?: string;
+    question?: string;
+    warnings?: string[];
+    outputExclusions?: string[];
+  },
+): LiveResearchTokenBenchmark => {
+  const rawSourceChars = rawCharsForSources(corpus.sources, studies);
+  const selectedContextChars = params.selectedContext.length;
+  const promptChars = [
+    params.systemInstruction || "",
+    params.selectedContext,
+    params.question || "",
+  ].join("\n").length;
+  const rawSourceEstimatedTokens = Math.ceil(rawSourceChars / 4);
+  const selectedContextEstimatedTokens = estimateTokens(params.selectedContext);
+
+  return {
+    route,
+    selectedSourceCount: corpus.sources.length,
+    scopedSourceCount: corpus.scope.scopedStudies,
+    rawSourceChars,
+    rawSourceEstimatedTokens,
+    selectedContextChars,
+    selectedContextEstimatedTokens,
+    promptEstimatedTokens: Math.ceil(promptChars / 4),
+    compressionRatio: rawSourceChars > 0 ? Number((selectedContextChars / rawSourceChars).toFixed(4)) : 0,
+    outputExclusions: params.outputExclusions || [],
+    warnings: uniqueStrings(params.warnings || []),
+  };
+};
+
+const sanitizeSourceGroundedAnswer = (answer: string, constraints: LiveResearchOutputConstraints): string => {
+  let sanitized = answer;
+  if (constraints.suppressEvidenceIds || constraints.suppressSystemCodes) {
+    sanitized = sanitized
+      .replace(/\[(?:SRC|fcf|ev|hit|atom|study|live|source|doc|run|case|answer)[^\]\n]{0,80}\]/gi, "")
+      .replace(/\[[^\]\n]{1,120}\]/g, "")
+      .replace(/\b(?:SRC|fcf|ev|hit|atom|run|case|answer|study)_[A-Za-z0-9:_-]+\b/g, "")
+      .replace(/\bSRC-[A-Za-z0-9_-]+\b/g, "");
+  }
+
+  constraints.exclusions.forEach((exclusion) => {
+    const patterns =
+      exclusion === "FCF"
+        ? [/\bFCF(?:-R3)?\b/gi]
+        : exclusion === "timeline"
+          ? [/\btimelines?\b/gi, /ציר\s*זמן/g]
+          : exclusion === "entity"
+            ? [/\b(?:entity|entities)\b/gi, /ישות(?:ות)?/g]
+            : exclusion === "confidence"
+              ? [/\bconfidence\b/gi, /ביטחון|רמת\s+ודאות/g]
+              : [/\bcommunicated[_\s-]?with\b/gi];
+    patterns.forEach((pattern) => {
+      sanitized = sanitized.replace(pattern, "");
+    });
+  });
+
+  return sanitized
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\s+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+};
+
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const hasHighRepetition = (answer: string): boolean => {
+  const lines = answer
+    .split(/\n+/)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter((line) => line.length >= 24);
+  if (lines.length < 5) return false;
+
+  const counts = new Map<string, number>();
+  lines.forEach((line) => counts.set(line, (counts.get(line) || 0) + 1));
+  if (Array.from(counts.values()).some((count) => count >= 3)) return true;
+
+  const normalizedAnswer = normalize(answer);
+  const tokens = normalizedAnswer.split(/\s+/).filter((token) => token.length > 2);
+  if (tokens.length < 80) return false;
+
+  const shingles = new Map<string, number>();
+  for (let index = 0; index <= tokens.length - 6; index += 1) {
+    const shingle = tokens.slice(index, index + 6).join(" ");
+    shingles.set(shingle, (shingles.get(shingle) || 0) + 1);
+  }
+  return Array.from(shingles.values()).some((count) => count >= 4);
+};
+
+const hasSingleSourceDominance = (answer: string, readPath: SourceGroundedReadPath): boolean => {
+  if (readPath.sourceSummaries.length < 2) return false;
+  const counts = readPath.sourceSummaries.map((summary) => {
+    const labels = uniqueStrings([
+      summary.displayName,
+      summary.title,
+      summary.title.split(/\s+/)[0] || "",
+    ]).filter((label) => label.length >= 3);
+    const count = labels.reduce((sum, label) => {
+      const pattern = new RegExp(escapeRegExp(label), "gi");
+      return sum + (answer.match(pattern)?.length || 0);
+    }, 0);
+    return { id: summary.id, count };
+  });
+  const total = counts.reduce((sum, entry) => sum + entry.count, 0);
+  if (total < 5) return false;
+  const max = Math.max(...counts.map((entry) => entry.count));
+  const others = total - max;
+  return max >= 4 && max > Math.max(2, others * 2.5);
+};
+
+const detectSourceGroundedAnswerViolations = (
+  answer: string,
+  constraints: LiveResearchOutputConstraints,
+  readPath: SourceGroundedReadPath,
+): string[] => {
+  const violations: string[] = [];
+  if (constraints.hebrewOnly) {
+    const hebrewChars = answer.match(/[\u0590-\u05FF]/g)?.length || 0;
+    const latinChars = answer.match(/[A-Za-z]/g)?.length || 0;
+    if (latinChars > 80 && latinChars > hebrewChars * 1.4) {
+      violations.push("model answer was not Hebrew-only");
+    }
+  }
+  if (hasHighRepetition(answer)) {
+    violations.push("model answer repeated the same content");
+  }
+  if (hasSingleSourceDominance(answer, readPath)) {
+    violations.push("model answer over-focused on one selected source");
+  }
+  if (constraints.exclusions.some((exclusion) => {
+    if (exclusion === "FCF") return /\bFCF(?:-R3)?\b/i.test(answer);
+    if (exclusion === "timeline") return /\btimelines?\b|ציר\s*זמן/i.test(answer);
+    if (exclusion === "entity") return /\bentities?\b|ישות(?:ות)?/i.test(answer);
+    if (exclusion === "confidence") return /\bconfidence\b|ביטחון|רמת\s+ודאות/i.test(answer);
+    return /\bcommunicated[_\s-]?with\b/i.test(answer);
+  })) {
+    violations.push("model answer contained explicitly excluded output terms");
+  }
+  if ((constraints.suppressEvidenceIds || constraints.suppressSystemCodes) && /\[[^\]\n]{1,120}\]|\bSRC-[A-Za-z0-9_-]+\b/i.test(answer)) {
+    violations.push("model answer leaked source or system identifiers");
+  }
+  return uniqueStrings(violations);
 };
 
 const buildEntityScopedFallback = (
@@ -1015,7 +2092,7 @@ const buildEntityScopedFallback = (
 
   if (isHebrewQuestion) {
     const hebrewLines = [
-      `${entity.name} מופיע ב-${relatedSources.length || 1} תיק${relatedSources.length === 1 ? "" : "ים"} בתוך ה-scope הנוכחי.`,
+      `${entity.name} מופיע ב-${relatedSources.length || 1} רשומ${relatedSources.length === 1 ? "ה" : "ות"} בתוך ה-scope הנוכחי של ה-DB.`,
       contextCard?.summary || entity.description || `${entity.name} מופיע במאגר המודיעיני הנבחר כ-${entity.type}.`,
       contextCard?.role_in_document ? `תפקיד: ${contextCard.role_in_document}` : "",
       entity.evidence?.length ? `ראיות:\n- ${entity.evidence.slice(0, 3).join("\n- ")}` : "",
@@ -1034,8 +2111,8 @@ const buildEntityScopedFallback = (
   }
 
   const lines = [
-    `${entity.name} surfaced in ${relatedSources.length || 1} scoped case${relatedSources.length === 1 ? "" : "s"}.`,
-    contextCard?.summary || entity.description || `${entity.name} is present in the scoped intelligence corpus as ${entity.type}.`,
+    `${entity.name} surfaced in ${relatedSources.length || 1} scoped database record${relatedSources.length === 1 ? "" : "s"}.`,
+    contextCard?.summary || entity.description || `${entity.name} is present in the selected database scope as ${entity.type}.`,
     contextCard?.role_in_document ? `Role: ${contextCard.role_in_document}` : "",
     entity.evidence?.length ? `Evidence:\n- ${entity.evidence.slice(0, 3).join("\n- ")}` : "",
     relatedSources.length
@@ -1123,7 +2200,8 @@ export const buildLiveResearchCorpus = (
     selectedStudyIds && selectedStudyIds.length > 0
       ? studies.filter((study) => selectedStudyIds.includes(study.id))
       : studies;
-  const selected = chooseStudies(question, studies, selectedStudyIds);
+  const selection = chooseStudies(question, studies, selectedStudyIds);
+  const selected = selection.selected;
   const selectedStudies = selected.map((entry) => entry.study);
   const entities = mergeEntities(selectedStudies);
   const relations = mergeRelations(selectedStudies);
@@ -1146,9 +2224,17 @@ export const buildLiveResearchCorpus = (
   );
 
   const mergedPackage: IntelligencePackage = {
-    clean_text: cleanText || "No scoped corpus text available.",
+    clean_text: cleanText || "No scoped database text available.",
     raw_text: cleanText,
     word_count: cleanText.split(/\s+/).filter(Boolean).length,
+    document_metadata: {
+      document_id: selectedStudies.length === 1 ? selectedStudies[0].id : "live-research-scope",
+      title: selectedStudies.length === 1 ? selectedStudies[0].title : "Live Research Scoped DB Records",
+      classification: "DB_SCOPE",
+      author: "TEVEL",
+      source_orgs: selectedStudies.map((study) => study.source).join(", "),
+      language: "mixed",
+    },
     entities,
     relations,
     insights: mergeByText(
@@ -1181,6 +2267,8 @@ export const buildLiveResearchCorpus = (
     context_cards: mergeContextCards(entities, selectedStudies),
     graph: buildGraph(entities, relations),
     reliability: averageReliability(selectedStudies),
+    research_profile: inferScopeResearchProfile(selectedStudies),
+    research_profile_detection: selectedStudies.length === 1 ? selectedStudies[0].intelligence.research_profile_detection : undefined,
     summary_panels: combineSummaryPanels(selectedStudies),
     retrieval_artifacts: combineRetrievalArtifacts(selectedStudies),
     version_validity: combineVersionValidity(selectedStudies),
@@ -1220,10 +2308,18 @@ export const buildLiveResearchCorpus = (
       (sum, bundle) => sum + bundle.hits.length,
       0,
     ),
+    active_context_id: selection.activeContextId,
+    active_context_reason: selection.activeContextReason,
+    active_context_confidence: selection.activeContextConfidence,
+    query_entity_mentions_in_context: selection.queryEntityMentionsInContext,
+    alias_mentions_in_context: selection.aliasMentionsInContext,
+    number_of_relevant_evidence_atoms: selection.numberOfRelevantEvidenceAtoms,
+    competing_contexts: selection.competingContexts,
   };
 
   const warnings = uniqueStrings([
     ...(selectedStudies.length === 0 ? ["No studies were available in the current scope."] : []),
+    ...(selection.ambiguous ? ["Active context confidence is too low to safely scope this question to one document/report/case."] : []),
     ...selectedStudies.flatMap((study) => study.intelligence.reference_warnings || []),
     ...(mergedPackage.retrieval_artifacts ? [] : ["Citation-ready retrieval artifacts are unavailable for the selected scope."]),
   ]).slice(0, 6);
@@ -1233,6 +2329,157 @@ export const buildLiveResearchCorpus = (
     sources,
     scope,
     warnings,
+  };
+};
+
+export const buildLiveResearchQuestionBenchmark = (
+  question: string,
+  studies: StudyItem[],
+  selectedStudyIds?: string[],
+  options: LiveResearchQuestionOptions = {},
+): LiveResearchTokenBenchmark => {
+  const reasoningEngine = getReasoningEngineDescriptor(options.reasoningEngineId);
+  const corpus = buildLiveResearchCorpus(question, studies, selectedStudyIds);
+
+  if (corpus.scope.scopedStudies === 0) {
+    return makeTokenBenchmark("empty", corpus, studies, {
+      selectedContext: "",
+      question,
+      outputExclusions: detectOutputConstraints(question).exclusions,
+      warnings: corpus.warnings,
+    });
+  }
+
+  if (corpus.sources.length === 0 || ((corpus.scope.active_context_confidence || 0) < 0.62 && (corpus.scope.competing_contexts || []).length > 1)) {
+    return makeTokenBenchmark("blocked", corpus, studies, {
+      selectedContext: "",
+      question,
+      outputExclusions: detectOutputConstraints(question).exclusions,
+      warnings: corpus.warnings,
+    });
+  }
+
+  if (shouldUseSourceGroundedAnswer(question, corpus)) {
+    const constraints = detectOutputConstraints(question);
+    const systemInstruction = buildSourceGroundedSystemInstruction(question, constraints);
+    const readPath = buildSourceGroundedReadPath(
+      question,
+      corpus,
+      studies,
+      reasoningEngine.surface === "cloud" ? 11000 : 8200,
+      constraints,
+    );
+    return makeTokenBenchmark("source-grounded", corpus, studies, {
+      selectedContext: `${readPath.knowledgeSnapshot}\n\n${readPath.retrievalContext}`,
+      systemInstruction,
+      question,
+      outputExclusions: constraints.exclusions,
+      warnings: corpus.warnings,
+    });
+  }
+
+  const fcfRun = buildFcfR3ReadPath(question, corpus.package, {
+    maxContextChars: reasoningEngine.surface === "cloud" ? 5200 : 3600,
+    maxEvidenceItems: reasoningEngine.surface === "cloud" ? 12 : 8,
+    maxSnippetChars: reasoningEngine.surface === "cloud" ? 220 : 180,
+    allowedSourceDocIds: corpus.sources.map((source) => source.id),
+    allowCrossSource: isGlobalDbSearchQuery(question) || Boolean(selectedStudyIds && selectedStudyIds.length > 1),
+  });
+
+  return makeTokenBenchmark("fcf-r3", corpus, studies, {
+    selectedContext: `${fcfRun.knowledge_snapshot}\n\n${fcfRun.materialized_context}`,
+    question,
+    outputExclusions: detectOutputConstraints(question).exclusions,
+    warnings: [...corpus.warnings, ...fcfRun.audit.warnings],
+  });
+};
+
+const askSourceGroundedLiveResearchQuestion = async (
+  question: string,
+  studies: StudyItem[],
+  history: ChatMessage[],
+  corpus: LiveResearchCorpus,
+  reasoningEngine: ReasoningEngineDescriptor,
+  options: LiveResearchQuestionOptions,
+): Promise<LiveResearchAnswer> => {
+  const constraints = detectOutputConstraints(question);
+  const caseId = `source_scope_${stableHash(corpus.sources.map((source) => source.id).sort().join("|") || question)}`;
+  const answerId = `source_answer_${stableHash(`${caseId}:${question}:${Date.now()}`)}`;
+  const systemInstruction = buildSourceGroundedSystemInstruction(question, constraints);
+  const readPath = buildSourceGroundedReadPath(
+    question,
+    corpus,
+    studies,
+    reasoningEngine.surface === "cloud" ? 11000 : 8200,
+    constraints,
+  );
+  const answerPackage: IntelligencePackage = {
+    ...corpus.package,
+    clean_text: readPath.retrievalContext || corpus.package.clean_text,
+    raw_text: readPath.retrievalContext || corpus.package.raw_text,
+    word_count: (readPath.retrievalContext || corpus.package.clean_text).split(/\s+/).filter(Boolean).length,
+    retrieval_artifacts: undefined,
+  };
+
+  const answer = await askContextualQuestion(question, answerPackage, history, {
+    fastMode: false,
+    caseId,
+    answerId,
+    reasoningEngineId: reasoningEngine.id,
+    geminiApiKey: options.geminiApiKey,
+    answerTimeoutMs: reasoningEngine.surface === "cloud" ? 45000 : 90000,
+    maxKnowledgeSummaryChars: 1400,
+    systemInstruction,
+    readPathContext: {
+      knowledgeSnapshot: readPath.knowledgeSnapshot,
+      retrievalContext: readPath.retrievalContext,
+      candidateEvidenceIds: constraints.suppressEvidenceIds || constraints.suppressSystemCodes ? undefined : readPath.evidenceIds,
+    },
+  });
+  const verificationNote = answer.match(/Citation verification:[^\n]+/i)?.[0];
+  const answerWithoutCitationNote = answer.replace(/\n*Citation verification:[^\n]+/gi, "").trim();
+  const reasoningFailure = classifyReasoningFailure(answerWithoutCitationNote, reasoningEngine);
+  const sanitizedModelAnswer = sanitizeSourceGroundedAnswer(answerWithoutCitationNote, constraints);
+  const constraintViolations = reasoningFailure
+    ? []
+    : detectSourceGroundedAnswerViolations(sanitizedModelAnswer, constraints, readPath);
+  const engineTrace = constraintViolations.length
+    ? {
+        ...buildLiveResearchEngineTrace(null, reasoningEngine),
+        responseMode: "deterministic-fallback" as const,
+        failureMessage: "Model answer violated source-grounded output constraints.",
+      }
+    : buildLiveResearchEngineTrace(reasoningFailure, reasoningEngine);
+  const finalAnswer = sanitizeSourceGroundedAnswer(
+    reasoningFailure || constraintViolations.length
+      ? buildSourceGroundedFallbackAnswer(question, readPath, engineTrace, constraints)
+      : sanitizedModelAnswer,
+    constraints,
+  );
+  const tokenBenchmark = makeTokenBenchmark("source-grounded", corpus, studies, {
+    selectedContext: `${readPath.knowledgeSnapshot}\n\n${readPath.retrievalContext}`,
+    systemInstruction,
+    question,
+    outputExclusions: constraints.exclusions,
+    warnings: corpus.warnings,
+  });
+
+  return {
+    answer: finalAnswer,
+    sources: corpus.sources,
+    scope: corpus.scope,
+    warnings: uniqueStrings([
+      ...corpus.warnings,
+      "Source-grounded document answer path used for this question.",
+      ...(constraints.exclusions.length ? ["Explicit output exclusions were passed to the reasoning engine."] : []),
+      ...(constraints.suppressEvidenceIds || constraints.suppressSystemCodes ? ["Evidence IDs and system codes were suppressed for this answer."] : []),
+      ...(constraintViolations.length ? [`Model answer failed output quality guard: ${constraintViolations.join("; ")}.`] : []),
+      engineTrace.failureMessage || "",
+    ]).slice(0, 8),
+    verificationNote,
+    citationGuard: "limited",
+    engineTrace,
+    tokenBenchmark,
   };
 };
 
@@ -1246,21 +2493,75 @@ export const askLiveResearchQuestion = async (
   const reasoningEngine = getReasoningEngineDescriptor(options.reasoningEngineId);
   const corpus = buildLiveResearchCorpus(question, studies, selectedStudyIds);
 
-  if (corpus.scope.scopedStudies === 0) {
+  if ((corpus.scope.active_context_confidence || 0) < 0.62 && (corpus.scope.competing_contexts || []).length > 1) {
     return {
-      answer: "No studies are currently loaded into TEVEL, so the live research corpus is empty.",
+      answer: "לא ברור על איזה תיק/מסמך להריץ את השאלה.",
       sources: [],
       scope: corpus.scope,
       warnings: corpus.warnings,
       citationGuard: "limited",
+      tokenBenchmark: buildLiveResearchQuestionBenchmark(question, studies, selectedStudyIds, options),
     };
   }
 
+  if (corpus.scope.scopedStudies === 0) {
+    return {
+      answer: "No database records are currently loaded into TEVEL, so Live Research has nothing to query.",
+      sources: [],
+      scope: corpus.scope,
+      warnings: corpus.warnings,
+      citationGuard: "limited",
+      tokenBenchmark: buildLiveResearchQuestionBenchmark(question, studies, selectedStudyIds, options),
+    };
+  }
+
+  if (corpus.sources.length === 0) {
+    return {
+      answer: /[\u0590-\u05FF]/u.test(question)
+        ? "לא נמצא מסמך DB שתואם לשאלה הזו. בחר את מסמכי המקור הרלוונטיים ב-scope או העלה אותם מחדש, ואז הרץ את השאלה שוב."
+        : "No DB document matched this question. Select the relevant source records in scope or ingest them again, then ask again.",
+      sources: [],
+      scope: corpus.scope,
+      warnings: uniqueStrings([
+        ...corpus.warnings,
+        "No selected DB record had enough source-text grounding for this document question.",
+      ]).slice(0, 8),
+      citationGuard: "limited",
+      tokenBenchmark: buildLiveResearchQuestionBenchmark(question, studies, selectedStudyIds, options),
+    };
+  }
+
+  if (shouldUseSourceGroundedAnswer(question, corpus)) {
+    return askSourceGroundedLiveResearchQuestion(question, studies, history, corpus, reasoningEngine, options);
+  }
+
   const fcfRun = buildFcfR3ReadPath(question, corpus.package, {
-    maxContextChars: reasoningEngine.surface === "cloud" ? 12000 : 5200,
-    maxEvidenceItems: reasoningEngine.surface === "cloud" ? 15 : 8,
-    maxSnippetChars: 420,
+    maxContextChars: reasoningEngine.surface === "cloud" ? 5200 : 3600,
+    maxEvidenceItems: reasoningEngine.surface === "cloud" ? 12 : 8,
+    maxSnippetChars: reasoningEngine.surface === "cloud" ? 220 : 180,
+    allowedSourceDocIds: corpus.sources.map((source) => source.id),
+    allowCrossSource: isGlobalDbSearchQuery(question) || Boolean(selectedStudyIds && selectedStudyIds.length > 1),
   });
+  const scopedEntityGroundingOk = fcfRun.selected.some(
+    (entry) =>
+      entry.entity_grounded &&
+      !["weak_noisy_evidence", "hypothesis_eei"].includes(entry.evidence_type) &&
+      entry.atom.kind !== "relation",
+  );
+  if (!scopedEntityGroundingOk) {
+    return {
+      answer: "נמצאו ראיות חלקיות בלבד במסגרת המקור הנוכחי.",
+      sources: corpus.sources,
+      scope: corpus.scope,
+      warnings: uniqueStrings([...corpus.warnings, "Scoped retrieval did not find direct entity-grounded evidence in the active source."]).slice(0, 8),
+      citationGuard: "limited",
+      fcfAudit: {
+        ...fcfRun.audit,
+        answer_status: "insufficient-evidence",
+      },
+      tokenBenchmark: buildLiveResearchQuestionBenchmark(question, studies, selectedStudyIds, options),
+    };
+  }
   const fcfCaseId = buildLiveResearchCaseId(corpus, selectedStudyIds);
   const fcfAnswerId = buildLiveResearchAnswerId(fcfCaseId, question);
   let citationRun: CitationVerificationRun | undefined;
@@ -1279,6 +2580,7 @@ export const askLiveResearchQuestion = async (
     geminiApiKey: options.geminiApiKey,
     answerTimeoutMs: reasoningEngine.surface === "cloud" ? 45000 : 90000,
     maxKnowledgeSummaryChars: 900,
+    systemInstruction: LIVE_RESEARCH_DB_ONLY_SYSTEM_INSTRUCTION,
     onCitationVerification: (run) => {
       citationRun = run;
     },
@@ -1302,7 +2604,7 @@ export const askLiveResearchQuestion = async (
     !reasoningFailure &&
     fcfRun.selected.length > 0 &&
     (!answerCitesSelectedEvidence(answerWithoutCitationNote, fcfRun.audit.selected_evidence_ids) ||
-      (citationRun && citationRun.supported_claim_rate < 0.5));
+      (citationRun && citationRun.supported_claim_rate < 0.8));
 
   const verifiedSynthesis = modelAnswerIsWeaklyGrounded
     ? buildFcfR3DeterministicAnswer(question, fcfRun, {
@@ -1349,6 +2651,13 @@ export const askLiveResearchQuestion = async (
     (citationRun
       ? `Citation verification: ${citationRun.overall_status.replace(/_/g, " ")} (${Math.round(citationRun.supported_claim_rate * 100)}% supported claims).`
       : undefined);
+  const tokenBenchmark = makeTokenBenchmark("fcf-r3", corpus, studies, {
+    selectedContext: `${fcfRun.knowledge_snapshot}\n\n${fcfRun.materialized_context}`,
+    systemInstruction: LIVE_RESEARCH_DB_ONLY_SYSTEM_INSTRUCTION,
+    question,
+    outputExclusions: detectOutputConstraints(question).exclusions,
+    warnings: [...corpus.warnings, ...fcfRun.audit.warnings],
+  });
 
   return {
     answer: finalAnswer,
@@ -1365,5 +2674,6 @@ export const askLiveResearchQuestion = async (
     citationGuard: fcfRun.retrieval_artifacts.item_count > 0 ? "active" : "limited",
     engineTrace,
     fcfAudit: persistedReadPath.audit,
+    tokenBenchmark,
   };
 };

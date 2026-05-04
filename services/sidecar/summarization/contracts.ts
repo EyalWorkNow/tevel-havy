@@ -11,7 +11,13 @@ export interface StructuredSummaryPanel {
   summary_text: string;
   key_findings: string[];
   cited_evidence_ids: string[];
+  version_state?: import("../versionValidity/contracts").VersionValidityState;
+  validity_score?: number;
+  citation_status?: import("../citationVerification/contracts").CitationSupportStatus;
   confidence: number;
+  evidence_clusters?: import("../retrieval").RetrievalEvidenceCluster[];
+  analytical_synthesis?: string;
+  bottom_line?: string;
   uncertainty_notes: string[];
   contradictions: string[];
   related_entities: string[];

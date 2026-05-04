@@ -11,6 +11,7 @@ import { SettingsPage } from './components/SettingsPage'; // Import Settings Pag
 import IdentityResolutionApp from './identity-resolution/IdentityResolutionApp';
 import { isEntityMatch } from './services/intelligenceService';
 import { analyzeDocument, enrichIntelligencePackage } from './services/analysisService';
+import type { ResearchProfileSelection } from './services/researchProfiles';
 import { StudyService } from './services/studyService';
 import { auth } from './services/firebase';
 import { onAuthStateChanged, User } from 'firebase/auth'; // Modular SDK Imports
@@ -105,11 +106,16 @@ const createGraphData = (entities: Entity[], relations: any[]): GraphData => {
     return { nodes, edges };
 };
 
-const createEmergencyFallbackIntelligence = (text: string, media: RawMedia[]): IntelligencePackage => {
+const createEmergencyFallbackIntelligence = (
+  text: string,
+  media: RawMedia[],
+  profileId: ResearchProfileSelection,
+): IntelligencePackage => {
     const fallback = enrichIntelligencePackage({
         clean_text: '',
         raw_text: text,
         word_count: text.split(/\s+/).filter(Boolean).length,
+        research_profile: profileId === 'AUTO' ? undefined : profileId,
         entities: [],
         relations: [],
         insights: [],
@@ -121,7 +127,7 @@ const createEmergencyFallbackIntelligence = (text: string, media: RawMedia[]): I
         context_cards: {},
         graph: { nodes: [], edges: [] },
         reliability: 0.45,
-    }, text);
+    }, text, { profileId });
 
     return {
         ...fallback,
@@ -222,6 +228,7 @@ const App: React.FC = () => {
     const [isLoadingApp, setIsLoadingApp] = useState(true); // Initial Load
     const [networkAlert, setNetworkAlert] = useState<{ newStudy: StudyItem, linkedEntities: Entity[] } | null>(null);
     const [isNavExpanded, setIsNavExpanded] = useState(false);
+    const [researchProfileId, setResearchProfileId] = useState<ResearchProfileSelection>('AUTO');
 
     // --- AUTH LISTENER ---
     useEffect(() => {
@@ -322,10 +329,10 @@ const App: React.FC = () => {
         try {
             let intelligence: IntelligencePackage;
             try {
-                intelligence = await analyzeDocument(text);
+                intelligence = await analyzeDocument(text, { profileId: researchProfileId });
             } catch (analysisError) {
                 console.error("Primary analysis failed, switching to emergency fallback package:", analysisError);
-                intelligence = createEmergencyFallbackIntelligence(text, media);
+                intelligence = createEmergencyFallbackIntelligence(text, media, researchProfileId);
             }
             intelligence.media = media;
             
@@ -379,7 +386,7 @@ const App: React.FC = () => {
 
         } catch (error) {
             console.error("Analysis Failed:", error);
-            const fallbackIntelligence = createEmergencyFallbackIntelligence(text, media);
+            const fallbackIntelligence = createEmergencyFallbackIntelligence(text, media, researchProfileId);
             fallbackIntelligence.graph = createGraphData(fallbackIntelligence.entities, fallbackIntelligence.relations);
 
             const today = new Date();
@@ -497,10 +504,29 @@ const App: React.FC = () => {
             </div>
         );
 
-        if (isAnalyzing) return <IngestionPanel onAnalyze={handleAnalyze} isAnalyzing={true} onCancel={() => { setIsAnalyzing(false); resetToFeed(); }} />;
+        if (isAnalyzing) {
+            return (
+                <IngestionPanel
+                    onAnalyze={handleAnalyze}
+                    isAnalyzing={true}
+                    onCancel={() => { setIsAnalyzing(false); resetToFeed(); }}
+                    researchProfileId={researchProfileId}
+                    onResearchProfileChange={setResearchProfileId}
+                />
+            );
+        }
         
         switch(view) {
-            case 'ingest': return <IngestionPanel onAnalyze={handleAnalyze} isAnalyzing={false} onCancel={resetToFeed} />;
+            case 'ingest':
+                return (
+                    <IngestionPanel
+                        onAnalyze={handleAnalyze}
+                        isAnalyzing={false}
+                        onCancel={resetToFeed}
+                        researchProfileId={researchProfileId}
+                        onResearchProfileChange={setResearchProfileId}
+                    />
+                );
             case 'realtime': return <RealTimeDashboard studies={studies} onPublish={handlePublishRealTimeStudy} />;
             case 'settings': return <SettingsPage user={user} onLogout={handleLogout} onBack={() => handleSetView('feed')} />;
             case 'analysis':

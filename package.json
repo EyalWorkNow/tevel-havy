@@ -9,8 +9,11 @@
     "preview": "vite preview",
     "diagnose:ollama": "node scripts/validate-local-reasoning.mjs",
     "bench:sidecar": "tsx scripts/benchmark-sidecar.ts",
+    "bench:tevel-gemini": "tsx scripts/benchmark-tevel-vs-gemini.ts",
+    "bench:live-sec": "tsx scripts/benchmark-live-research-sec.ts",
     "bench:knowledge": "tsx scripts/benchmark-knowledge-enrichment.ts",
     "bench:entity-intelligence": "tsx scripts/benchmark-entity-intelligence.ts",
+    "bench:trust": "tsx scripts/benchmark-version-trust.ts",
     "test:sidecar": "tsx --test tests/sidecar/*.test.ts"
   },
   "dependencies": {

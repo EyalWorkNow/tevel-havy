@@ -1,7 +1,48 @@
 
 // ENUMS from DB
 export type KnowledgeType = 'FACT' | 'ASSESSMENT' | 'HYPOTHESIS' | 'TASK' | 'WARNING';
-export type EntityType = 'PERSON' | 'ORG' | 'LOCATION' | 'OBJECT' | 'METHOD' | 'EVENT' | 'OTHER';
+export type EntityType =
+  | 'PERSON'
+  | 'ORG'
+  | 'ORGANIZATION'
+  | 'AGREEMENT'
+  | 'CLAUSE'
+  | 'OBLIGATION'
+  | 'RIGHT'
+  | 'JURISDICTION'
+  | 'REMEDY'
+  | 'LEGAL_RISK'
+  | 'AMOUNT'
+  | 'METRIC'
+  | 'PERIOD'
+  | 'TRANSACTION'
+  | 'INSTRUMENT'
+  | 'COUNTERPARTY'
+  | 'RISK'
+  | 'PAPER'
+  | 'STUDY'
+  | 'MODEL'
+  | 'DATASET'
+  | 'RESULT'
+  | 'HYPOTHESIS'
+  | 'LIMITATION'
+  | 'BASELINE'
+  | 'LOCATION'
+  | 'FACILITY'
+  | 'OBJECT'
+  | 'ASSET'
+  | 'VEHICLE'
+  | 'IDENTIFIER'
+  | 'FINANCIAL_ACCOUNT'
+  | 'COMMUNICATION_CHANNEL'
+  | 'DIGITAL_ASSET'
+  | 'DEVICE'
+  | 'DOCUMENT'
+  | 'CARGO'
+  | 'METHOD'
+  | 'EVENT'
+  | 'DATE'
+  | 'OTHER';
 export type StatementCategory = 'STRATEGIC' | 'FINANCIAL' | 'TACTICAL' | 'LOGISTICAL' | 'IDEOLOGICAL' | 'COLLECTION' | 'OTHER';
 export type ImpactLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 export type UrgencyLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'IMMEDIATE';
@@ -234,6 +275,8 @@ export interface IntelligencePackage {
   clean_text: string; // Summary
   raw_text?: string; // Original Text for DB
   word_count: number;
+  research_profile?: import("./services/researchProfiles").ResearchProfileId;
+  research_profile_detection?: import("./services/researchProfiles").ResearchProfileDetection;
   
   // New Structured Data
   document_metadata?: DocumentMetadata;
@@ -265,6 +308,8 @@ export interface IntelligencePackage {
   temporal_relations?: import("./services/sidecar/temporal/contracts").TemporalRelationRecord[];
   summary_panels?: Record<string, import("./services/sidecar/summarization/contracts").StructuredSummaryPanel>;
   retrieval_artifacts?: import("./services/sidecar/retrieval").RetrievalArtifacts;
+  version_validity?: import("./services/sidecar/versionValidity/contracts").VersionValidityArtifacts;
+  citation_verification?: import("./services/sidecar/citationVerification/contracts").CitationVerificationArtifacts;
   research_dossier?: ResearchDossier;
   canonical_entities?: import("./services/sidecar/knowledge/contracts").CanonicalFtMEntity[];
   reference_knowledge?: Record<string, import("./services/sidecar/knowledge/contracts").ReferenceKnowledgeProfile>;

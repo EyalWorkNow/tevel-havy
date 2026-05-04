@@ -1,6 +1,8 @@
 import type { Relation } from "../../types";
 import type { TemporalEventRecord } from "./temporal/contracts";
 import type { ReferenceKnowledgeProfile } from "./knowledge/contracts";
+import type { CitationSupportStatus } from "./citationVerification/contracts";
+import type { VersionValidityReport, VersionValidityState } from "./versionValidity/contracts";
 import { LexicalSearchHit, SidecarExtractionPayload, SidecarLexicalIndex } from "./types";
 import { normalizeLookupText } from "./textUnits";
 
@@ -14,6 +16,28 @@ export type RetrievalBundleKind =
 
 export type RetrievalItemType = "text_unit" | "entity" | "mention" | "relation" | "event" | "claim" | "reference";
 export type RetrievalBackend = "hybrid_graph_ranker_v1" | "hybrid_graph_semantic_v1";
+export type RetrievalEvidenceType =
+  | "direct_evidence"
+  | "indirect_evidence"
+  | "corroborating_evidence"
+  | "hypothesis_eei"
+  | "weak_noisy_evidence";
+
+export interface RetrievalEvidenceCluster {
+  cluster_id: string;
+  label: string;
+  role: string;
+  evidence_type: RetrievalEvidenceType;
+  status?: "confirmed_direct" | "corroborated" | "indirect_indicator" | "hypothesis_eei" | "weak_noisy";
+  confidence_label?: "high" | "medium" | "low";
+  hits: RetrievalEvidenceHit[];
+  cited_evidence_ids: string[];
+  related_entities: string[];
+  interpretation: string;
+  confidence: number;
+  direct_evidence_count: number;
+  weak_evidence_count: number;
+}
 
 export interface RetrievalScoreBreakdown {
   lexical_score: number;
@@ -23,12 +47,23 @@ export interface RetrievalScoreBreakdown {
   graph_score: number;
   temporal_score: number;
   confidence_score: number;
+  validity_score?: number;
+  entity_relevance_score?: number;
+  analytical_importance_score?: number;
+  directness_score?: number;
+  cluster_diversity_score?: number;
+  duplicate_penalty?: number;
+  boilerplate_penalty?: number;
+  isolated_token_penalty?: number;
   fused_score: number;
 }
 
 export interface RetrievalRankingDiagnostics {
   semantic_enabled: boolean;
   embedding_model?: string;
+  version_validity_enabled?: boolean;
+  broad_analytical_enabled?: boolean;
+  expanded_query_terms?: string[];
   fusion_strategy: string[];
   adapter_status?: NonNullable<SidecarExtractionPayload["runtime_diagnostics"]>["adapter_status"];
 }
@@ -48,10 +83,21 @@ export interface RetrievalEvidenceHit {
   normalized_time_start?: string;
   normalized_time_end?: string;
   contradiction_ids: string[];
+  version_state?: VersionValidityState;
+  validity_score?: number;
+  source_trust?: number;
+  version_edge_ids?: string[];
+  citation_status?: CitationSupportStatus;
   confidence: number;
   score: number;
   matched_terms: string[];
   explanation: string[];
+  evidence_type?: RetrievalEvidenceType;
+  cluster_id?: string;
+  cluster_label?: string;
+  directness_score?: number;
+  analytical_importance?: number;
+  context_window?: string;
   score_breakdown?: RetrievalScoreBreakdown;
 }
 
@@ -65,7 +111,13 @@ export interface RetrievalEvidenceBundle {
   related_entities: string[];
   related_events: string[];
   contradictions: string[];
+  version_state?: VersionValidityState;
+  validity_score?: number;
+  citation_status?: CitationSupportStatus;
   confidence: number;
+  evidence_clusters?: RetrievalEvidenceCluster[];
+  analytical_synthesis?: string;
+  bottom_line?: string;
   temporal_window?: {
     start?: string;
     end?: string;
@@ -83,9 +135,9 @@ export interface RetrievalArtifacts {
   diagnostics?: RetrievalRankingDiagnostics;
 }
 
-type SearchMode = "generic" | "case" | "entity" | "relationship" | "timeline" | "contradiction" | "update";
+export type SearchMode = "generic" | "case" | "entity" | "relationship" | "timeline" | "contradiction" | "update";
 
-type SearchOptions = {
+export type SearchOptions = {
   limit?: number;
   mode?: SearchMode;
   relatedEntities?: string[];
@@ -98,6 +150,7 @@ type SearchOptions = {
 
 type IndexedEvidenceItem = Omit<RetrievalEvidenceHit, "score" | "matched_terms" | "explanation"> & {
   search_text: string;
+  context_window?: string;
 };
 
 type ScoredEvidenceItem = {
@@ -110,6 +163,13 @@ type ScoredEvidenceItem = {
   graphScore: number;
   temporalScore: number;
   confidenceScore: number;
+  validityScore: number;
+  entityRelevanceScore: number;
+  analyticalImportanceScore: number;
+  directnessScore: number;
+  boilerplatePenalty: number;
+  isolatedTokenPenalty: number;
+  duplicatePenalty: number;
   semanticScore: number;
   fusedScore: number;
   lexicalRank: number;
@@ -140,6 +200,12 @@ const tokenize = (value: string): string[] =>
 
 const unique = <T>(items: T[]): T[] => Array.from(new Set(items.filter(Boolean) as T[]));
 
+const NAMESPACE_BASE_TRUST: Record<string, number> = {
+  wikidata: 0.75,
+  wikipedia: 0.72,
+  openalex: 0.70,
+};
+
 const stableHash = (value: string): string => {
   let hash = 2166136261;
   for (let index = 0; index < value.length; index += 1) {
@@ -149,10 +215,38 @@ const stableHash = (value: string): string => {
   return (hash >>> 0).toString(16).padStart(8, "0");
 };
 
-const makeSnippet = (value: string, limit = 300): string => {
+const makeSnippet = (value: string, limit = 620): string => {
   const normalized = value.replace(/\s+/g, " ").trim();
   if (normalized.length <= limit) return normalized;
   return `${normalized.slice(0, limit - 1).trimEnd()}…`;
+};
+
+const contextWindowForTextUnit = (payload: SidecarExtractionPayload, textUnitId?: string, limit = 900): string | undefined => {
+  if (!textUnitId) return undefined;
+  const unit = payload.text_units.find((entry) => entry.text_unit_id === textUnitId);
+  if (!unit) return undefined;
+
+  const neighbors = payload.text_units
+    .filter((entry) => Math.abs(entry.ordinal - unit.ordinal) <= 1)
+    .sort((left, right) => left.ordinal - right.ordinal)
+    .map((entry) => entry.raw_text || entry.text)
+    .filter(Boolean)
+    .join(" ");
+
+  return makeSnippet(neighbors || unit.raw_text || unit.text, limit);
+};
+
+const contextualSnippet = (
+  payload: SidecarExtractionPayload,
+  textUnitId: string | undefined,
+  fallback: string,
+  limit = 720,
+): { snippet: string; contextWindow?: string } => {
+  const contextWindow = contextWindowForTextUnit(payload, textUnitId, Math.max(limit, 900));
+  return {
+    snippet: makeSnippet(contextWindow || fallback, limit),
+    contextWindow,
+  };
 };
 
 const parseTime = (value?: string): number | undefined => {
@@ -217,6 +311,117 @@ const buildSemanticText = (item: IndexedEvidenceItem): string =>
     .filter(Boolean)
     .join(" | ")
     .slice(0, 1000);
+
+const versionStateWeight: Record<VersionValidityState, number> = {
+  current: 1,
+  unknown: 0.72,
+  amended: 0.68,
+  historical: 0.5,
+  superseded: 0.28,
+  contradicted: 0.22,
+  cancelled: 0.12,
+};
+
+const queryWantsCurrentEvidence = (query: string): boolean =>
+  /\b(?:current|latest|now|active|valid|effective|fresh|up[-\s]?to[-\s]?date)\b|מה נכון עכשיו|בתוקף|עדכני|האחרון|הנוכחי/i.test(query);
+
+const isBroadAnalyticalQuery = (query: string, options: SearchOptions = {}): boolean =>
+  options.mode === "entity" &&
+  /\b(?:context|analysis|analyze|meaning|significance|implication|role|network|pattern|relationship|synthesis)\b|הקשר|ניתוח|משמעות|מה זה אומר|תפקיד|קשרים|רשת|דפוס|מסקנה|תמונה/i.test(
+    query,
+  );
+
+const BOILERPLATE_PATTERN =
+  /\b(?:page|copyright|all rights reserved|generated by|confidential|table of contents|disclaimer|report id|classification)\b|עמוד|זכויות|סודי|תוכן עניינים|מספר דוח/i;
+
+const directnessForItem = (item: IndexedEvidenceItem, entityOverlapCount: number, matchedTerms: string[]): number => {
+  if (item.reference_only) return 0.24;
+  if (item.item_type === "relation") return 0.92;
+  if (item.item_type === "event") return 0.82;
+  if (item.item_type === "claim") return /claimed|assessed|suspected|לפי|טען|העריך|חשד/i.test(item.snippet) ? 0.68 : 0.76;
+  if (item.item_type === "mention") return 0.62;
+  if (item.item_type === "text_unit" && entityOverlapCount > 0 && matchedTerms.length > 1) return 0.58;
+  if (item.item_type === "entity") return 0.44;
+  return 0.34;
+};
+
+const evidenceTypeForScores = (
+  item: IndexedEvidenceItem,
+  directnessScore: number,
+  analyticalImportanceScore: number,
+  penalties: number,
+): RetrievalEvidenceType => {
+  if (penalties > 0.18 || (directnessScore < 0.35 && analyticalImportanceScore < 0.28)) return "weak_noisy_evidence";
+  if (item.item_type === "claim" && /hypothesis|assumption|eei|requires collection|דרוש בירור|השערה|לבירור/i.test(item.search_text)) {
+    return "hypothesis_eei";
+  }
+  if (directnessScore >= 0.72) return "direct_evidence";
+  if (directnessScore >= 0.52 || analyticalImportanceScore >= 0.52) return "corroborating_evidence";
+  return "indirect_evidence";
+};
+
+const stableClusterId = (label: string): string => `cluster_${stableHash(label)}`;
+
+const clusterLabelForHit = (
+  hit: Pick<RetrievalEvidenceHit, "item_type" | "related_entities" | "related_events" | "snippet" | "version_state" | "contradiction_ids">,
+): string => {
+  const entities = hit.related_entities.slice(0, 2).join(" / ");
+  if (hit.contradiction_ids?.length || hit.version_state === "contradicted") return "Conflict and contradiction signals";
+  if (hit.item_type === "relation" && entities) return `Relationship: ${entities}`;
+  if (hit.item_type === "event") return entities ? `Operational event: ${entities}` : "Operational events";
+  if (hit.item_type === "claim") return entities ? `Claims about ${entities}` : "Document claims";
+  if (hit.item_type === "entity" && entities) return `Entity profile: ${entities}`;
+  if (hit.item_type === "reference") return entities ? `Reference context: ${entities}` : "Reference context";
+  return entities ? `Context around ${entities}` : "Document context";
+};
+
+const evidenceRoleForType = (evidenceType: RetrievalEvidenceType): string =>
+  evidenceType === "direct_evidence"
+    ? "Direct support for an analytical claim"
+    : evidenceType === "corroborating_evidence"
+      ? "Corroborates or strengthens a direct signal"
+      : evidenceType === "hypothesis_eei"
+        ? "Hypothesis or collection requirement, not a fact"
+        : evidenceType === "weak_noisy_evidence"
+          ? "Weak/noisy context kept behind stronger evidence"
+          : "Indirect background context";
+
+const findVersionAtom = (
+  versionValidity: VersionValidityReport | undefined,
+  params: { evidenceId?: string; textUnitId?: string; sourceDocId?: string },
+) =>
+  versionValidity?.atoms.find((atom) => {
+    if (params.evidenceId && atom.evidence_id === params.evidenceId) return true;
+    if (params.textUnitId && atom.source_text_unit_id === params.textUnitId) return true;
+    return Boolean(params.sourceDocId && atom.source_doc_id === params.sourceDocId && !params.evidenceId && !params.textUnitId);
+  });
+
+const withVersionValidity = <T extends IndexedEvidenceItem>(
+  item: T,
+  versionValidity: VersionValidityReport | undefined,
+): T => {
+  const atom = findVersionAtom(versionValidity, {
+    evidenceId: item.evidence_id,
+    textUnitId: item.source_text_unit_id,
+    sourceDocId: item.source_doc_id,
+  });
+  if (!atom) {
+    return {
+      ...item,
+      version_state: item.reference_only ? "unknown" : item.version_state,
+      validity_score: item.validity_score ?? (item.reference_only ? 0.55 : undefined),
+      source_trust: item.source_trust ?? (item.reference_only ? 0.52 : undefined),
+      version_edge_ids: item.version_edge_ids || [],
+    };
+  }
+  return {
+    ...item,
+    version_state: atom.version_state,
+    validity_score: atom.validity_score,
+    source_trust: atom.source_trust,
+    version_edge_ids: atom.version_edge_ids,
+  };
+};
 
 const addRecord = (
   index: SidecarLexicalIndex,
@@ -411,6 +616,7 @@ const buildIndexedEvidenceItems = (
   relations: Relation[],
   resolveEntityName: (entityId: string) => string,
   referenceKnowledge?: Record<string, ReferenceKnowledgeProfile>,
+  versionValidity?: VersionValidityReport,
 ): IndexedEvidenceItem[] => {
   const entityNamesByTextUnit = new Map<string, string[]>();
   (payload.entities || []).forEach((entity) => {
@@ -429,6 +635,7 @@ const buildIndexedEvidenceItems = (
       unique([...(eventIdsByTextUnit.get(event.source_text_unit_id) ?? []), event.event_id]),
     );
   });
+  const currentTextUnitIds = new Set((payload.text_units || []).map((unit) => unit.text_unit_id));
 
   const items: IndexedEvidenceItem[] = [
     ...(payload.text_units || []).map((unit) => ({
@@ -437,7 +644,8 @@ const buildIndexedEvidenceItems = (
       source_doc_id: payload.source_doc_id,
       source_text_unit_id: unit.text_unit_id,
       evidence_id: undefined,
-      snippet: makeSnippet(unit.raw_text || unit.text),
+      snippet: makeSnippet(contextWindowForTextUnit(payload, unit.text_unit_id) || unit.raw_text || unit.text, 720),
+      context_window: contextWindowForTextUnit(payload, unit.text_unit_id),
       related_entities: entityNamesByTextUnit.get(unit.text_unit_id) ?? [],
       related_events: eventIdsByTextUnit.get(unit.text_unit_id) ?? [],
       normalized_time_start: undefined,
@@ -467,7 +675,8 @@ const buildIndexedEvidenceItems = (
       source_doc_id: payload.source_doc_id,
       source_text_unit_id: mention.source_text_unit_id,
       evidence_id: mention.evidence.evidence_id,
-      snippet: makeSnippet(mention.evidence.raw_supporting_snippet || mention.mention_text),
+      snippet: contextualSnippet(payload, mention.source_text_unit_id, mention.evidence.raw_supporting_snippet || mention.mention_text).snippet,
+      context_window: contextualSnippet(payload, mention.source_text_unit_id, mention.evidence.raw_supporting_snippet || mention.mention_text).contextWindow,
       related_entities: unique([mention.mention_text, mention.entity_id ? resolveEntityName(mention.entity_id) : ""]),
       related_events: eventIdsByTextUnit.get(mention.source_text_unit_id) ?? [],
       normalized_time_start: mention.timestamp,
@@ -485,7 +694,8 @@ const buildIndexedEvidenceItems = (
         source_doc_id: payload.source_doc_id,
         source_text_unit_id: relation.source_text_unit_id,
         evidence_id: relation.evidence.evidence_id,
-        snippet: makeSnippet(relation.evidence.raw_supporting_snippet || `${sourceName} ${relation.relation_type} ${targetName}`),
+        snippet: contextualSnippet(payload, relation.source_text_unit_id, relation.evidence.raw_supporting_snippet || `${sourceName} ${relation.relation_type} ${targetName}`).snippet,
+        context_window: contextualSnippet(payload, relation.source_text_unit_id, relation.evidence.raw_supporting_snippet || `${sourceName} ${relation.relation_type} ${targetName}`).contextWindow,
         related_entities: unique([sourceName, targetName]),
         related_events: eventIdsByTextUnit.get(relation.source_text_unit_id) ?? [],
         normalized_time_start: relation.timestamp || relation.evidence.timestamp,
@@ -501,7 +711,8 @@ const buildIndexedEvidenceItems = (
       source_doc_id: event.source_doc_id,
       source_text_unit_id: event.source_text_unit_id,
       evidence_id: event.supporting_evidence_ids?.[0],
-      snippet: makeSnippet([event.time_expression_raw, event.title, event.trigger_text].filter(Boolean).join(" — ")),
+      snippet: contextualSnippet(payload, event.source_text_unit_id, [event.time_expression_raw, event.title, event.trigger_text].filter(Boolean).join(" — ")).snippet,
+      context_window: contextualSnippet(payload, event.source_text_unit_id, [event.time_expression_raw, event.title, event.trigger_text].filter(Boolean).join(" — ")).contextWindow,
       related_entities: unique([...event.actor_entities, ...event.target_entities, ...event.location_entities]),
       related_events: [event.event_id],
       normalized_time_start: event.normalized_start,
@@ -525,7 +736,8 @@ const buildIndexedEvidenceItems = (
       source_doc_id: payload.source_doc_id,
       source_text_unit_id: claim.source_text_unit_id,
       evidence_id: claim.evidence.evidence_id,
-      snippet: makeSnippet(claim.claim_text),
+      snippet: contextualSnippet(payload, claim.source_text_unit_id, claim.evidence.raw_supporting_snippet || claim.claim_text).snippet,
+      context_window: contextualSnippet(payload, claim.source_text_unit_id, claim.evidence.raw_supporting_snippet || claim.claim_text).contextWindow,
       related_entities: unique([
         ...(claim.speaker_entity_ids || []).map(resolveEntityName),
         ...(claim.subject_entity_ids || []).map(resolveEntityName),
@@ -555,7 +767,13 @@ const buildIndexedEvidenceItems = (
           normalized_time_start: undefined,
           normalized_time_end: undefined,
           contradiction_ids: [],
-          confidence: Math.max(0.45, ...profile.links.map((link) => link.match_confidence), 0.55),
+          confidence: Math.max(
+            0.42,
+            ...profile.links.map((link) => {
+              const namespaceTrust = NAMESPACE_BASE_TRUST[link.namespace?.toLowerCase() ?? ""] ?? 0.50;
+              return link.match_confidence * namespaceTrust;
+            }),
+          ),
           search_text: [profile.canonical_name, ...profile.aliases, description, ...profile.affiliations].join(" "),
         })),
         ...profile.assertions.map((assertion) => ({
@@ -580,9 +798,32 @@ const buildIndexedEvidenceItems = (
 
       return referenceSnippets;
     }),
+    ...(versionValidity?.atoms || [])
+      .filter((atom) => atom.source_doc_id !== payload.source_doc_id || !currentTextUnitIds.has(atom.source_text_unit_id))
+      .map((atom) => ({
+        item_id: atom.atom_id,
+        item_type: "text_unit" as const,
+        source_doc_id: atom.source_doc_id,
+        source_text_unit_id: atom.source_text_unit_id,
+        evidence_id: atom.evidence_id,
+        snippet: makeSnippet(atom.text),
+        related_entities: atom.entity_anchors,
+        related_events: [],
+        normalized_time_start: atom.time_anchors[0],
+        normalized_time_end: undefined,
+        contradiction_ids: atom.version_state === "contradicted" ? atom.version_edge_ids : [],
+        version_state: atom.version_state,
+        validity_score: atom.validity_score,
+        source_trust: atom.source_trust,
+        version_edge_ids: atom.version_edge_ids,
+        confidence: atom.validity_score,
+        search_text: `${atom.text} ${atom.entity_anchors.join(" ")} ${atom.time_anchors.join(" ")}`,
+      })),
   ];
 
-  return items.filter((item) => item.search_text.trim().length > 0);
+  return items
+    .filter((item) => item.search_text.trim().length > 0)
+    .map((item) => withVersionValidity(item, versionValidity));
 };
 
 const buildBaseScoredItems = (
@@ -601,6 +842,7 @@ const buildBaseScoredItems = (
     .map((item) => parseTime(item.normalized_time_start))
     .filter((value): value is number => typeof value === "number")
     .sort((left, right) => right - left)[0];
+  const currentIntent = options.mode === "update" || queryWantsCurrentEvidence(query);
 
   return items
     .map<ScoredEvidenceItem | null>((item) => {
@@ -623,6 +865,16 @@ const buildBaseScoredItems = (
         return item.related_entities.some((candidate) => adjacencySet.has(normalizeLookupText(candidate)));
       })
         ? 0.08
+        : hintedEntities.some((entity) => {
+            const adjacencySet = adjacency.get(normalizeLookupText(entity));
+            if (!adjacencySet) return false;
+            // 2-hop: item's entity is a neighbor-of-neighbor of a hinted entity
+            return item.related_entities.some((candidate) => {
+              const normalizedCandidate = normalizeLookupText(candidate);
+              return Array.from(adjacencySet).some((hop1) => adjacency.get(hop1)?.has(normalizedCandidate));
+            });
+          })
+        ? 0.04
         : 0;
 
       const itemTime = parseTime(item.normalized_time_start);
@@ -683,8 +935,61 @@ const buildBaseScoredItems = (
         explanation.push("Graph-adjacent entity context boosted this hit.");
       }
 
+      const entityRelevanceScore = Math.min(1, entityOverlap.length * 0.35 + item.related_entities.length * 0.035);
+      const directnessScore = directnessForItem(item, entityOverlap.length, matchedTerms);
+      const analyticalImportanceScore = Math.min(
+        1,
+        (item.item_type === "relation" ? 0.32 : 0) +
+          (item.item_type === "event" ? 0.26 : 0) +
+          (item.item_type === "claim" ? 0.22 : 0) +
+          (item.contradiction_ids.length ? 0.28 : 0) +
+          Math.min(0.2, item.related_entities.length * 0.045) +
+          Math.min(0.12, item.related_events.length * 0.04) +
+          item.confidence * 0.18,
+      );
+      const boilerplatePenalty = BOILERPLATE_PATTERN.test(item.snippet) ? 0.16 : 0;
+      const isolatedTokenPenalty =
+        matchedTerms.length === 1 &&
+        entityOverlap.length === 0 &&
+        (/^\d+$/.test(matchedTerms[0]) || matchedTerms[0].length <= 3)
+          ? 0.12
+          : 0;
+      const duplicatePenalty = 0;
+
       const confidenceScore = item.confidence * 0.12 + Math.min(0.06, item.related_entities.length * 0.0125);
-      const structuralScore = overlapScore + graphScore + temporalScore + confidenceScore;
+      const rawValidityScore =
+        item.validity_score ??
+        (item.version_state ? versionStateWeight[item.version_state] : undefined) ??
+        0.58;
+      let validityScore = rawValidityScore * 0.12;
+      if (currentIntent && item.version_state) {
+        if (item.version_state === "current") {
+          validityScore += 0.11;
+          explanation.push("Current-version evidence boosted.");
+        } else if (item.version_state === "historical" || item.version_state === "superseded" || item.version_state === "cancelled") {
+          validityScore -= 0.16;
+          explanation.push(`${item.version_state} evidence penalized for current-answer intent.`);
+        } else if (item.version_state === "contradicted") {
+          validityScore -= 0.22;
+          explanation.push("Contradicted evidence penalized for current-answer intent.");
+        }
+      }
+      if (item.source_trust && item.source_trust >= 0.85) {
+        validityScore += 0.04;
+        explanation.push("High-authority source trust boosted this hit.");
+      }
+
+      const structuralScore =
+        overlapScore +
+        graphScore +
+        temporalScore +
+        confidenceScore +
+        validityScore +
+        entityRelevanceScore * 0.1 +
+        directnessScore * 0.09 +
+        analyticalImportanceScore * 0.12 -
+        boilerplatePenalty -
+        isolatedTokenPenalty;
 
       if (lexicalScore + structuralScore + intentScore <= 0) {
         return null;
@@ -700,6 +1005,13 @@ const buildBaseScoredItems = (
         graphScore,
         temporalScore,
         confidenceScore,
+        validityScore,
+        entityRelevanceScore,
+        analyticalImportanceScore,
+        directnessScore,
+        boilerplatePenalty,
+        isolatedTokenPenalty,
+        duplicatePenalty,
         semanticScore: 0,
         fusedScore: 0,
         lexicalRank: 999,
@@ -737,6 +1049,13 @@ const applyRankFusion = (items: ScoredEvidenceItem[], semanticEnabled = false): 
       item.graphScore * 0.3 +
       item.temporalScore * 0.25 +
       item.confidenceScore * 0.3 +
+      item.validityScore * 0.35 +
+      item.entityRelevanceScore * 0.22 +
+      item.analyticalImportanceScore * 0.24 +
+      item.directnessScore * 0.2 -
+      item.boilerplatePenalty -
+      item.isolatedTokenPenalty -
+      item.duplicatePenalty +
       (semanticEnabled && semanticRank ? reciprocalRank(semanticRank) + item.semanticScore * 0.6 : 0);
 
     return {
@@ -775,7 +1094,19 @@ const selectDiversifiedHits = (items: ScoredEvidenceItem[], limit: number): Scor
       )
         ? 0.03
         : 0;
-      const diversityScore = candidate.fusedScore - sameTextUnitPenalty - sameTypePenalty - entityOverlapPenalty;
+      const candidateTokens = tokenize(candidate.item.snippet);
+      const candidateTokenSet = new Set(candidateTokens);
+      const contentOverlapPenalty =
+        candidateTokenSet.size > 4 &&
+        selected.some((item) => {
+          const selectedTokens = tokenize(item.item.snippet);
+          const intersection = selectedTokens.filter((t) => candidateTokenSet.has(t)).length;
+          const union = new Set([...selectedTokens, ...candidateTokens]).size;
+          return union > 0 && intersection / union > 0.62;
+        })
+          ? 0.18
+          : 0;
+      const diversityScore = candidate.fusedScore - sameTextUnitPenalty - sameTypePenalty - entityOverlapPenalty - contentOverlapPenalty;
       if (diversityScore > bestScore) {
         bestIndex = index;
         bestScore = diversityScore;
@@ -794,6 +1125,21 @@ const toRetrievalHits = (items: ScoredEvidenceItem[]): RetrievalEvidenceHit[] =>
     if (entry.semanticScore > 0.12) {
       explanation.push("Semantic similarity reinforced this hit.");
     }
+    const penalties = entry.boilerplatePenalty + entry.isolatedTokenPenalty + entry.duplicatePenalty;
+    const evidenceType = evidenceTypeForScores(
+      entry.item,
+      entry.directnessScore,
+      entry.analyticalImportanceScore,
+      penalties,
+    );
+    const provisionalLabel = clusterLabelForHit({
+      item_type: entry.item.item_type,
+      related_entities: entry.item.related_entities,
+      related_events: entry.item.related_events,
+      snippet: entry.item.snippet,
+      version_state: entry.item.version_state,
+      contradiction_ids: entry.item.contradiction_ids,
+    });
 
     return {
       item_id: entry.item.item_id,
@@ -810,10 +1156,21 @@ const toRetrievalHits = (items: ScoredEvidenceItem[]): RetrievalEvidenceHit[] =>
       normalized_time_start: entry.item.normalized_time_start,
       normalized_time_end: entry.item.normalized_time_end,
       contradiction_ids: entry.item.contradiction_ids,
+      version_state: entry.item.version_state,
+      validity_score: entry.item.validity_score,
+      source_trust: entry.item.source_trust,
+      version_edge_ids: entry.item.version_edge_ids,
+      citation_status: entry.item.citation_status,
       confidence: entry.item.confidence,
       score: entry.fusedScore,
       matched_terms: entry.matchedTerms,
       explanation: explanation.slice(0, 4),
+      evidence_type: evidenceType,
+      cluster_id: stableClusterId(provisionalLabel),
+      cluster_label: provisionalLabel,
+      directness_score: roundScore(entry.directnessScore),
+      analytical_importance: roundScore(entry.analyticalImportanceScore),
+      context_window: entry.item.context_window,
       score_breakdown: {
         lexical_score: roundScore(entry.lexicalScore),
         structural_score: roundScore(entry.structuralScore),
@@ -822,6 +1179,14 @@ const toRetrievalHits = (items: ScoredEvidenceItem[]): RetrievalEvidenceHit[] =>
         graph_score: roundScore(entry.graphScore),
         temporal_score: roundScore(entry.temporalScore),
         confidence_score: roundScore(entry.confidenceScore),
+        validity_score: roundScore(entry.validityScore),
+        entity_relevance_score: roundScore(entry.entityRelevanceScore),
+        analytical_importance_score: roundScore(entry.analyticalImportanceScore),
+        directness_score: roundScore(entry.directnessScore),
+        cluster_diversity_score: 0,
+        duplicate_penalty: roundScore(entry.duplicatePenalty),
+        boilerplate_penalty: roundScore(entry.boilerplatePenalty),
+        isolated_token_penalty: roundScore(entry.isolatedTokenPenalty),
         fused_score: entry.fusedScore,
       },
     };
@@ -837,6 +1202,27 @@ const scoreEvidenceItems = (
   const fusedItems = applyRankFusion(baseItems)
     .sort((left, right) => right.fusedScore - left.fusedScore || right.item.confidence - left.item.confidence);
   return toRetrievalHits(selectDiversifiedHits(fusedItems, options.limit ?? 6));
+};
+
+export const searchRetrievalEvidence = (
+  payload: SidecarExtractionPayload,
+  eventRecords: TemporalEventRecord[],
+  relations: Relation[],
+  resolveEntityName: (entityId: string) => string,
+  query: string,
+  options: SearchOptions = {},
+  referenceKnowledge?: Record<string, ReferenceKnowledgeProfile>,
+  versionValidity?: VersionValidityReport,
+): RetrievalEvidenceHit[] => {
+  const items = buildIndexedEvidenceItems(
+    payload,
+    eventRecords,
+    relations,
+    resolveEntityName,
+    referenceKnowledge,
+    versionValidity,
+  );
+  return scoreEvidenceItems(items, relations, query, options);
 };
 
 const scoreEvidenceItemsWithSemanticSearch = async (
@@ -872,6 +1258,88 @@ const scoreEvidenceItemsWithSemanticSearch = async (
   };
 };
 
+const clusterEvidenceHits = (hits: RetrievalEvidenceHit[]): RetrievalEvidenceCluster[] => {
+  const grouped = new Map<string, RetrievalEvidenceHit[]>();
+  hits.forEach((hit) => {
+    const label = hit.cluster_label || clusterLabelForHit(hit);
+    const clusterId = hit.cluster_id || stableClusterId(label);
+    grouped.set(clusterId, [...(grouped.get(clusterId) || []), { ...hit, cluster_id: clusterId, cluster_label: label }]);
+  });
+
+  return Array.from(grouped.entries())
+    .map(([clusterId, clusterHits]) => {
+      const sortedHits = [...clusterHits].sort(
+        (left, right) =>
+          (right.analytical_importance || 0) + (right.directness_score || 0) -
+            ((left.analytical_importance || 0) + (left.directness_score || 0)) ||
+          right.score - left.score,
+      );
+      const directCount = sortedHits.filter((hit) => hit.evidence_type === "direct_evidence").length;
+      const weakCount = sortedHits.filter((hit) => hit.evidence_type === "weak_noisy_evidence").length;
+      const evidenceType =
+        sortedHits.find((hit) => hit.evidence_type === "direct_evidence")?.evidence_type ||
+        sortedHits.find((hit) => hit.evidence_type === "corroborating_evidence")?.evidence_type ||
+        sortedHits[0]?.evidence_type ||
+        "indirect_evidence";
+      const label = sortedHits[0]?.cluster_label || "Evidence cluster";
+      const confidence = sortedHits.length
+        ? roundScore(
+            sortedHits.reduce(
+              (sum, hit) => sum + hit.score * 0.45 + (hit.directness_score || 0) * 0.3 + (hit.analytical_importance || 0) * 0.25,
+              0,
+            ) / sortedHits.length,
+          )
+        : 0.2;
+
+      return {
+        cluster_id: clusterId,
+        label,
+        role: evidenceRoleForType(evidenceType),
+        evidence_type: evidenceType,
+        hits: sortedHits,
+        cited_evidence_ids: unique(
+          sortedHits
+            .filter((hit) => !hit.reference_only)
+            .map((hit) => hit.evidence_id)
+            .filter(Boolean) as string[],
+        ),
+        related_entities: unique(sortedHits.flatMap((hit) => hit.related_entities)),
+        interpretation: sortedHits[0]?.snippet
+          ? `${label}: ${makeSnippet(sortedHits[0].snippet, 260)}`
+          : `${label}: no interpretable evidence text was retained.`,
+        confidence,
+        direct_evidence_count: directCount,
+        weak_evidence_count: weakCount,
+      };
+    })
+    .sort(
+      (left, right) =>
+        right.confidence - left.confidence ||
+        right.direct_evidence_count - left.direct_evidence_count ||
+        left.weak_evidence_count - right.weak_evidence_count,
+    );
+};
+
+const synthesizeBundle = (
+  title: string,
+  clusters: RetrievalEvidenceCluster[],
+  hits: RetrievalEvidenceHit[],
+): { synthesis: string; bottomLine: string } => {
+  const strongClusters = clusters.filter((cluster) => cluster.evidence_type !== "weak_noisy_evidence");
+  const weakClusters = clusters.filter((cluster) => cluster.evidence_type === "weak_noisy_evidence");
+  const leadLabels = strongClusters.slice(0, 3).map((cluster) => cluster.label);
+  const synthesis = leadLabels.length
+    ? `${title} is supported by ${strongClusters.length} evidence cluster(s): ${leadLabels.join("; ")}. Weak or isolated evidence is kept behind stronger clusters.`
+    : `${title} has no strong evidence clusters; only weak or indirect evidence survived retrieval.`;
+  const bottomLine = hits.length
+    ? weakClusters.length === hits.length
+      ? "Bottom line: treat this as insufficient for a firm analytical conclusion until stronger evidence is collected."
+      : "Bottom line: answer from the strongest clusters first, then use weak or indirect hits only as caveats."
+    : "Bottom line: no answer should be generated without more corpus evidence.";
+
+  return { synthesis, bottomLine };
+};
+
 const finalizeBundle = (
   kind: RetrievalBundleKind,
   title: string,
@@ -888,6 +1356,24 @@ const finalizeBundle = (
     hits.length > 0
       ? Number((hits.reduce((sum, hit) => sum + hit.score, 0) / hits.length).toFixed(4))
       : 0.35;
+  const versionStates = hits.map((hit) => hit.version_state).filter(Boolean) as VersionValidityState[];
+  const versionState: VersionValidityState | undefined =
+    versionStates.includes("contradicted")
+      ? "contradicted"
+      : versionStates.includes("cancelled")
+        ? "cancelled"
+        : versionStates.includes("superseded")
+          ? "superseded"
+          : versionStates.length > 0 && versionStates.every((state) => state === "current")
+            ? "current"
+            : versionStates.includes("historical")
+              ? "historical"
+              : versionStates[0];
+  const averageValidity = hits
+    .map((hit) => hit.validity_score)
+    .filter((value): value is number => typeof value === "number");
+  const evidenceClusters = clusterEvidenceHits(hits);
+  const analytical = synthesizeBundle(title, evidenceClusters, hits);
 
   return {
     bundle_id: `bundle_${kind}_${stableHash(`${title}:${query}`)}`,
@@ -904,7 +1390,14 @@ const finalizeBundle = (
     related_entities: unique(hits.flatMap((hit) => hit.related_entities)),
     related_events: unique(hits.flatMap((hit) => hit.related_events)),
     contradictions,
+    version_state: versionState,
+    validity_score: averageValidity.length
+      ? Number((averageValidity.reduce((sum, value) => sum + value, 0) / averageValidity.length).toFixed(4))
+      : undefined,
     confidence,
+    evidence_clusters: evidenceClusters,
+    analytical_synthesis: analytical.synthesis,
+    bottom_line: analytical.bottomLine,
     temporal_window: options.timeWindow,
     warnings: hits.length > 0 ? [] : [`No high-signal evidence hits were retrieved for ${title.toLowerCase()}.`],
   };
@@ -925,13 +1418,22 @@ export const buildRetrievalArtifactsFromPayload = (
   relations: Relation[],
   resolveEntityName: (entityId: string) => string,
   referenceKnowledge?: Record<string, ReferenceKnowledgeProfile>,
+  versionValidity?: VersionValidityReport,
+  prebuiltItems?: IndexedEvidenceItem[],
 ): RetrievalArtifacts => {
-  const items = buildIndexedEvidenceItems(payload, eventRecords, relations, resolveEntityName, referenceKnowledge);
+  const items = prebuiltItems ?? buildIndexedEvidenceItems(payload, eventRecords, relations, resolveEntityName, referenceKnowledge, versionValidity);
   const topEntityNames = payload.entities
     .slice()
     .sort((left, right) => right.confidence - left.confidence)
     .map((entity) => entity.canonical_name)
     .slice(0, 5);
+  const expandedEntityTerms = unique(
+    payload.entities
+      .slice()
+      .sort((left, right) => right.confidence - left.confidence)
+      .flatMap((entity) => [entity.canonical_name, ...(entity.aliases || [])])
+      .slice(0, 24),
+  );
   const primaryEntity = topEntityNames[0];
   const topRelationTexts = payload.relation_candidates
     .slice(0, 3)
@@ -1058,7 +1560,12 @@ export const buildRetrievalArtifactsFromPayload = (
     bundles,
     diagnostics: {
       semantic_enabled: false,
-      fusion_strategy: ["reciprocal-rank-fusion", "graph overlap", "temporal priors", "diversified evidence packing"],
+      broad_analytical_enabled: Object.values(bundles).some((bundle) => isBroadAnalyticalQuery(bundle.query, { mode: bundleKindToMode(bundle.kind) })),
+      expanded_query_terms: expandedEntityTerms,
+      fusion_strategy: versionValidity
+        ? ["reciprocal-rank-fusion", "graph overlap", "temporal priors", "version validity", "diversified evidence packing"]
+        : ["reciprocal-rank-fusion", "graph overlap", "temporal priors", "diversified evidence packing"],
+      version_validity_enabled: Boolean(versionValidity),
       adapter_status: payload.runtime_diagnostics?.adapter_status,
     },
   };
@@ -1070,33 +1577,54 @@ export const buildRetrievalArtifactsFromPayloadWithSemanticSearch = async (
   relations: Relation[],
   resolveEntityName: (entityId: string) => string,
   referenceKnowledge?: Record<string, ReferenceKnowledgeProfile>,
+  versionValidity?: VersionValidityReport,
 ): Promise<RetrievalArtifacts> => {
-  const baseArtifacts = buildRetrievalArtifactsFromPayload(payload, eventRecords, relations, resolveEntityName, referenceKnowledge);
-  const items = buildIndexedEvidenceItems(payload, eventRecords, relations, resolveEntityName, referenceKnowledge);
+  // Build items once and share across base artifacts + semantic scoring
+  const items = buildIndexedEvidenceItems(payload, eventRecords, relations, resolveEntityName, referenceKnowledge, versionValidity);
+  const baseArtifacts = buildRetrievalArtifactsFromPayload(payload, eventRecords, relations, resolveEntityName, referenceKnowledge, versionValidity, items);
 
-  const upgradedBundles = await Promise.all(
-    Object.values(baseArtifacts.bundles).map(async (bundle) => {
-      const result = await scoreEvidenceItemsWithSemanticSearch(items, relations, bundle.query, {
+  // Pre-warm embedding cache: collect all bundle texts and embed in one HTTP call
+  const allBundleTexts = unique(
+    Object.values(baseArtifacts.bundles).flatMap((bundle) => {
+      const opts: SearchOptions = {
         mode: bundleKindToMode(bundle.kind),
         relatedEntities: bundle.related_entities,
         relatedEvents: bundle.related_events,
         timeWindow: bundle.temporal_window,
         limit: bundle.hits.length || 6,
-      });
+      };
+      const baseItems = buildBaseScoredItems(items, relations, bundle.query, opts);
+      const shortlist = applyRankFusion(baseItems)
+        .sort((l, r) => r.fusedScore - l.fusedScore || r.item.confidence - l.item.confidence)
+        .slice(0, Math.max((opts.limit ?? 6) * 3, 12));
+      return [bundle.query, ...shortlist.map((entry) => buildSemanticText(entry.item))];
+    }),
+  );
+  await embedTexts(allBundleTexts); // fills cache; subsequent per-bundle calls below make zero HTTP requests
 
+  const upgradedBundleResults = await Promise.allSettled(
+    Object.values(baseArtifacts.bundles).map(async (bundle) => {
+      const opts: SearchOptions = {
+        mode: bundleKindToMode(bundle.kind),
+        relatedEntities: bundle.related_entities,
+        relatedEvents: bundle.related_events,
+        timeWindow: bundle.temporal_window,
+        limit: bundle.hits.length || 6,
+      };
+      const result = await scoreEvidenceItemsWithSemanticSearch(items, relations, bundle.query, opts);
       return {
-        bundle: finalizeBundle(bundle.kind, bundle.title, bundle.query, result.hits, {
-          mode: bundleKindToMode(bundle.kind),
-          relatedEntities: bundle.related_entities,
-          relatedEvents: bundle.related_events,
-          timeWindow: bundle.temporal_window,
-          limit: bundle.hits.length || 6,
-        }),
+        bundle: finalizeBundle(bundle.kind, bundle.title, bundle.query, result.hits, opts),
         semanticEnabled: result.semanticEnabled,
         embeddingModel: result.embeddingModel,
       };
     }),
   );
+
+  const originalBundles = Object.values(baseArtifacts.bundles);
+  const upgradedBundles = upgradedBundleResults.map((result, index) => {
+    if (result.status === "fulfilled") return result.value;
+    return { bundle: originalBundles[index], semanticEnabled: false, embeddingModel: undefined };
+  });
 
   const bundles = Object.fromEntries(
     upgradedBundles.map((entry) => [entry.bundle.kind, entry.bundle]),
@@ -1119,9 +1647,12 @@ export const buildRetrievalArtifactsFromPayloadWithSemanticSearch = async (
     diagnostics: {
       semantic_enabled: semanticEnabled,
       embedding_model: embeddingModel,
+      broad_analytical_enabled: Object.values(bundles).some((bundle) => isBroadAnalyticalQuery(bundle.query, { mode: bundleKindToMode(bundle.kind) })),
+      expanded_query_terms: unique(Object.values(bundles).flatMap((bundle) => bundle.related_entities)).slice(0, 24),
       fusion_strategy: semanticEnabled
-        ? ["reciprocal-rank-fusion", "semantic embeddings", "graph overlap", "temporal priors", "diversified evidence packing"]
-        : ["reciprocal-rank-fusion", "graph overlap", "temporal priors", "diversified evidence packing"],
+        ? ["reciprocal-rank-fusion", "semantic embeddings", "graph overlap", "temporal priors", "version validity", "diversified evidence packing"]
+        : ["reciprocal-rank-fusion", "graph overlap", "temporal priors", "version validity", "diversified evidence packing"],
+      version_validity_enabled: Boolean(versionValidity),
       adapter_status: payload.runtime_diagnostics?.adapter_status,
     },
   };

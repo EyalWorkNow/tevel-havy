@@ -8,6 +8,7 @@ import {
 } from "../../services/sidecar/retrieval";
 import { buildSummaryPanelsFromRetrievalArtifacts } from "../../services/sidecar/summarization/evidencePack";
 import { buildTemporalEventRecords } from "../../services/sidecar/temporal/projector";
+import { buildVersionValidityReport } from "../../services/sidecar/versionValidity/service";
 import type { SidecarExtractionPayload } from "../../services/sidecar/types";
 
 const originalFetch = globalThis.fetch;
@@ -293,6 +294,27 @@ test("retrieval artifacts connect case, relationship, update, and contradiction 
   assert.ok(artifacts.bundles.case_brief.cited_evidence_ids.includes("ev-1"));
 });
 
+test("retrieval artifacts expose version validity fields when VersionRAG artifacts are supplied", () => {
+  const payload = buildPayload();
+  payload.text_units = payload.text_units.map((unit) => ({
+    ...unit,
+    metadata: {
+      document_id: "case-9-report",
+      version_label: "2026-04-14",
+      source_trust: 0.91,
+    },
+  }));
+  const eventRecords = buildTemporalEventRecords(payload.event_candidates, (entityId) => entityId);
+  const validity = buildVersionValidityReport({ caseId: "case-9", payload });
+  const artifacts = buildRetrievalArtifactsFromPayload(payload, eventRecords, [], (entityId) => entityId, undefined, validity);
+  const panels = buildSummaryPanelsFromRetrievalArtifacts(artifacts);
+
+  assert.equal(artifacts.diagnostics?.version_validity_enabled, true);
+  assert.ok(Object.values(artifacts.bundles).some((bundle) => typeof bundle.validity_score === "number"));
+  assert.ok(Object.values(artifacts.bundles).some((bundle) => bundle.hits.some((hit) => hit.version_state === "current")));
+  assert.equal(panels.case_brief.version_state, "current");
+});
+
 test("summary panels project retrieval bundles into UI-friendly cards", () => {
   const payload = buildPayload();
   const eventRecords = buildTemporalEventRecords(payload.event_candidates, (entityId) =>
@@ -342,8 +364,35 @@ test("retrieval hits expose fused score breakdowns and runtime diagnostics", () 
   assert.ok(topHit.score_breakdown);
   assert.ok((topHit.score_breakdown?.fused_score || 0) > 0);
   assert.ok((topHit.score_breakdown?.structural_score || 0) > 0);
+  assert.ok((topHit.score_breakdown?.directness_score || 0) > 0);
+  assert.ok((topHit.score_breakdown?.analytical_importance_score || 0) > 0);
+  assert.ok(topHit.evidence_type);
+  assert.ok(topHit.cluster_id);
+  assert.ok(artifacts.bundles.case_brief.evidence_clusters?.length);
+  assert.ok(artifacts.bundles.case_brief.analytical_synthesis?.includes("evidence cluster"));
   assert.equal(artifacts.diagnostics?.semantic_enabled, false);
   assert.equal(artifacts.diagnostics?.adapter_status?.spacy?.state, "active");
+});
+
+test("retrieval broad entity context keeps context windows and cluster coverage ahead of isolated snippets", () => {
+  const payload = buildPayload();
+  const eventRecords = buildTemporalEventRecords(payload.event_candidates, (entityId) =>
+    payload.entities.find((entity) => entity.entity_id === entityId)?.canonical_name || entityId,
+  );
+
+  const hits = buildRetrievalArtifactsFromPayload(
+    payload,
+    eventRecords,
+    [{ source: "Cedar Finance", target: "Orion Logistics", type: "FUNDED", confidence: 0.84 }],
+    (entityId) => payload.entities.find((entity) => entity.entity_id === entityId)?.canonical_name || entityId,
+  ).bundles.relationship_brief.hits;
+
+  const relationHit = hits.find((hit) => hit.item_type === "relation");
+  assert.ok(relationHit);
+  assert.ok((relationHit.context_window || "").includes("Maya Cohen met Orion Logistics"));
+  assert.ok((relationHit.context_window || "").includes("Cedar Finance funded Orion Logistics"));
+  assert.notEqual(relationHit.evidence_type, "weak_noisy_evidence");
+  assert.ok((relationHit.directness_score || 0) >= 0.7);
 });
 
 test("semantic retrieval upgrade fuses embedding similarity when Ollama embeddings are available", async () => {

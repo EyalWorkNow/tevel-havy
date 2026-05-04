@@ -7,4 +7,6 @@ export * from "./pythonBridge";
 export * from "./smartExtraction";
 export * from "./smartPipeline";
 export * from "./retrieval";
+export * from "./versionValidity";
+export * from "./citationVerification";
 export * from "./pipeline";

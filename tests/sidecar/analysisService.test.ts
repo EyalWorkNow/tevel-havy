@@ -44,7 +44,7 @@ test("enrichIntelligencePackage expands entity coverage and fills research-facin
   assert.ok(entityTypes.has("PERSON"));
   assert.ok(entityTypes.has("ORGANIZATION"));
   assert.ok(entityTypes.has("LOCATION"));
-  assert.ok(entityTypes.has("ASSET"));
+  assert.ok(entityTypes.has("ASSET") || entityTypes.has("DIGITAL_ASSET") || entityTypes.has("COMMUNICATION_CHANNEL"));
   assert.ok(entityTypes.has("DATE"));
 
   assert.ok(enriched.relations.some((relation) => relation.type === "FUNDED"));
@@ -62,6 +62,50 @@ test("enrichIntelligencePackage expands entity coverage and fills research-facin
   assert.ok((enriched.research_dossier?.collection_priorities || []).length > 0);
   assert.match(enriched.context_cards["Orion Logistics"].extended_profile || "", /Research posture/i);
   assert.ok(enriched.clean_text.includes("Detected"));
+});
+
+test("enrichIntelligencePackage preserves VersionRAG and VeriCite artifacts on the package", () => {
+  const sourceText = "Maya Cohen met Orion Logistics in Ashdod.";
+  const basePackage: IntelligencePackage = {
+    ...EMPTY_PACKAGE,
+    clean_text: "Maya Cohen met Orion Logistics.",
+    raw_text: sourceText,
+    version_validity: {
+      case_id: "case-trust",
+      document_identity: "doc-trust",
+      generated_at: "2026-04-28T00:00:00.000Z",
+      current_version_id: "version-current",
+      documents: [],
+      versions: [],
+      atoms: [],
+      edges: [],
+      metrics: {
+        atom_count: 0,
+        current_atom_count: 0,
+        historical_atom_count: 0,
+        edge_count: 0,
+        contradicted_atom_count: 0,
+        average_validity_score: 0,
+      },
+      warnings: [],
+    },
+    citation_verification: {
+      latest_run: {
+        run_id: "vericite-run",
+        case_id: "case-trust",
+        generated_at: "2026-04-28T00:00:00.000Z",
+        claim_results: [],
+        overall_status: "supported",
+        supported_claim_rate: 1,
+        warnings: [],
+      },
+    },
+  };
+
+  const enriched = enrichIntelligencePackage(basePackage, sourceText);
+
+  assert.equal(enriched.version_validity?.case_id, "case-trust");
+  assert.equal(enriched.citation_verification?.latest_run.overall_status, "supported");
 });
 
 test("enrichIntelligencePackage preserves existing rich records while adding missing scaffolding", () => {
@@ -123,16 +167,146 @@ test("enrichIntelligencePackage broadens Hebrew investigative extraction beyond 
   assert.ok(entityTypes.has("ORGANIZATION"));
   assert.ok(entityTypes.has("LOCATION"));
   assert.ok(entityTypes.has("EVENT"));
-  assert.ok(entityTypes.has("OBJECT") || entityTypes.has("ASSET"));
+  assert.ok(entityTypes.has("OBJECT") || entityTypes.has("ASSET") || entityTypes.has("DEVICE") || entityTypes.has("FACILITY") || entityTypes.has("COMMUNICATION_CHANNEL"));
   assert.ok(enriched.context_cards["נמל אשדוד"]);
   assert.ok(enriched.context_cards["מבצע חוף שקט"]);
   assert.ok(enriched.relations.some((relation) => relation.type === "FUNDED"));
   assert.ok(enriched.relations.some((relation) => relation.type === "COMMUNICATED_WITH"));
   assert.ok(enriched.relations.some((relation) => relation.type === "MOVED_TO"));
   assert.ok((enriched.timeline || []).length >= 2);
-  assert.match(enriched.clean_text, /זוהו \d+ ישויות/);
+  assert.match(enriched.clean_text, /זוהו \d+ (?:ישויות|פריטי מחקר)/);
   assert.ok((enriched.intel_questions || []).length > 0);
   assert.ok((enriched.intel_tasks || []).length > 0);
+});
+
+test("enrichIntelligencePackage decomposes legal research into clauses obligations and governing terms", () => {
+  const sourceText = `
+  Master Services Agreement MSA-7 was signed by Orion Labs and Cedar Capital.
+  Clause 5.2 says the Client shall pay USD 250,000 by 2026-05-01.
+  The governing law is New York and Section 8.1 includes liquidated damages for late delivery.
+  `;
+
+  const enriched = enrichIntelligencePackage(EMPTY_PACKAGE, sourceText, { profileId: "LEGAL" });
+  const entityTypes = new Set(enriched.entities.map((entity) => entity.type));
+
+  assert.equal(enriched.research_profile, "LEGAL");
+  assert.ok(entityTypes.has("AGREEMENT"));
+  assert.ok(entityTypes.has("CLAUSE"));
+  assert.ok(entityTypes.has("OBLIGATION"));
+  assert.ok(entityTypes.has("JURISDICTION"));
+  assert.ok(entityTypes.has("REMEDY"));
+  assert.ok(entityTypes.has("AMOUNT"));
+  assert.ok(enriched.clean_text.includes("legal entities and obligations"));
+});
+
+test("enrichIntelligencePackage decomposes finance research into amounts metrics periods and flows", () => {
+  const sourceText = `
+  Q3 2025 revenue was USD 4.2 million and EBITDA margin 18%.
+  Wire transfer USD 950,000 from Cedar Capital to Orion Labs settled invoice INV-44.
+  The credit facility carried liquidity risk and the runway metric declined QoQ.
+  `;
+
+  const enriched = enrichIntelligencePackage(EMPTY_PACKAGE, sourceText, { profileId: "FINANCE" });
+  const entityTypes = new Set(enriched.entities.map((entity) => entity.type));
+
+  assert.equal(enriched.research_profile, "FINANCE");
+  assert.ok(entityTypes.has("AMOUNT"));
+  assert.ok(entityTypes.has("METRIC"));
+  assert.ok(entityTypes.has("PERIOD"));
+  assert.ok(entityTypes.has("TRANSACTION"));
+  assert.ok(entityTypes.has("INSTRUMENT"));
+  assert.ok(entityTypes.has("RISK"));
+  assert.ok(enriched.clean_text.includes("financial entities, metrics, and flows"));
+});
+
+test("enrichIntelligencePackage auto-detects financial uploads without intelligence-first outputs", () => {
+  const sourceText = `
+  FY 2025 revenue was USD 12.4 million, ARR increased 18% YoY, and EBITDA margin reached 21%.
+  Invoice INV-882 was paid by wire transfer from Cedar Capital to Orion Labs.
+  Liquidity risk increased after the credit facility was drawn in Q4 2025.
+  `;
+
+  const enriched = enrichIntelligencePackage(EMPTY_PACKAGE, sourceText, { profileId: "AUTO" });
+  const entityTypes = new Set(enriched.entities.map((entity) => entity.type));
+  const joinedRecommendations = (enriched.tactical_assessment?.recommendations || []).join(" ");
+
+  assert.equal(enriched.research_profile, "FINANCE");
+  assert.equal(enriched.research_profile_detection?.requestedProfile, "AUTO");
+  assert.ok(entityTypes.has("AMOUNT"));
+  assert.ok(entityTypes.has("METRIC"));
+  assert.ok(entityTypes.has("PERIOD"));
+  assert.ok(entityTypes.has("TRANSACTION"));
+  assert.ok(!enriched.clean_text.toLowerCase().includes("intelligence categories"));
+  assert.ok(!joinedRecommendations.toLowerCase().includes("collection"));
+});
+
+test("enrichIntelligencePackage auto-detects legal uploads and extracts legal primitives", () => {
+  const sourceText = `
+  Service Agreement SA-19 governs the relationship between Northwind Ltd. and Cedar Capital.
+  Section 4.1 states the Supplier shall deliver audit files within 10 business days.
+  The governing law is Israel and Clause 9.2 provides indemnity for breach.
+  `;
+
+  const enriched = enrichIntelligencePackage(EMPTY_PACKAGE, sourceText, { profileId: "AUTO" });
+  const entityTypes = new Set(enriched.entities.map((entity) => entity.type));
+
+  assert.equal(enriched.research_profile, "LEGAL");
+  assert.ok(entityTypes.has("AGREEMENT"));
+  assert.ok(entityTypes.has("CLAUSE"));
+  assert.ok(entityTypes.has("OBLIGATION"));
+  assert.ok(entityTypes.has("JURISDICTION"));
+  assert.ok(entityTypes.has("REMEDY"));
+  assert.ok(enriched.clean_text.includes("legal entities and obligations"));
+});
+
+test("enrichIntelligencePackage activates a mixed legal-finance profile stack", () => {
+  const sourceText = `
+  Credit Facility Agreement CFA-22 was executed by Cedar Capital and Orion Labs.
+  Clause 6.4 states the Borrower shall pay USD 1.8 million by wire transfer before 2026-06-30.
+  Q2 2026 EBITDA margin was 19% and the outstanding loan creates liquidity risk if covenant Section 9.1 is breached.
+  The governing law is Delaware and liquidated damages apply to late repayment.
+  `;
+
+  const enriched = enrichIntelligencePackage(EMPTY_PACKAGE, sourceText, { profileId: "AUTO" });
+  const entityTypes = new Set(enriched.entities.map((entity) => entity.type));
+  const activeProfiles = enriched.research_profile_detection?.activeProfiles || [];
+  const joinedRecommendations = (enriched.tactical_assessment?.recommendations || []).join(" ");
+
+  assert.ok(["LEGAL", "FINANCE"].includes(enriched.research_profile || ""));
+  assert.equal(enriched.research_profile_detection?.isMixedDomain, true);
+  assert.ok((enriched.research_profile_detection?.confidence || 0) > 0.5);
+  assert.ok(activeProfiles.includes("LEGAL"));
+  assert.ok(activeProfiles.includes("FINANCE"));
+  assert.ok(entityTypes.has("AGREEMENT"));
+  assert.ok(entityTypes.has("CLAUSE"));
+  assert.ok(entityTypes.has("OBLIGATION"));
+  assert.ok(entityTypes.has("AMOUNT"));
+  assert.ok(entityTypes.has("METRIC"));
+  assert.ok(entityTypes.has("TRANSACTION"));
+  assert.ok(enriched.clean_text.includes("Adaptive profile stack"));
+  assert.ok(joinedRecommendations.includes("Validate each obligation"));
+  assert.ok(joinedRecommendations.includes("Reconcile amounts"));
+  assert.ok(!joinedRecommendations.toLowerCase().includes("collection"));
+});
+
+test("enrichIntelligencePackage decomposes academic research into datasets models metrics and findings", () => {
+  const sourceText = `
+  We propose evidence-aware chunking for retrieval-augmented research.
+  The model GraphRAG-XL is evaluated on dataset MTEB-Legal and outperforms BM25 baseline by 12 points.
+  F1=0.91 was reported in the main experiment. Limitation small Hebrew sample size affects generalization.
+  `;
+
+  const enriched = enrichIntelligencePackage(EMPTY_PACKAGE, sourceText, { profileId: "ACADEMIC" });
+  const entityTypes = new Set(enriched.entities.map((entity) => entity.type));
+
+  assert.equal(enriched.research_profile, "ACADEMIC");
+  assert.ok(entityTypes.has("HYPOTHESIS"));
+  assert.ok(entityTypes.has("MODEL"));
+  assert.ok(entityTypes.has("DATASET"));
+  assert.ok(entityTypes.has("METRIC"));
+  assert.ok(entityTypes.has("RESULT"));
+  assert.ok(entityTypes.has("LIMITATION"));
+  assert.ok(enriched.clean_text.includes("academic entities, methods, and findings"));
 });
 
 test("analyzeDocument returns a fast structured package without waiting on legacy model extraction", async () => {
@@ -240,7 +414,14 @@ test("analyzeDocument scales to a dense list of mixed-domain entities", async ()
   assert.ok(types.has("PERSON"));
   assert.ok(types.has("ORGANIZATION"));
   assert.ok(types.has("LOCATION"));
-  assert.ok(types.has("ASSET"));
+  assert.ok(
+    types.has("ASSET") ||
+      types.has("DIGITAL_ASSET") ||
+      types.has("COMMUNICATION_CHANNEL") ||
+      types.has("DEVICE") ||
+      types.has("FINANCIAL_ACCOUNT") ||
+      types.has("CARGO"),
+  );
   assert.ok(types.has("EVENT") || types.has("METHOD") || types.has("OBJECT"));
 });
 
@@ -265,6 +446,34 @@ test("analyzeDocument adapts to civilian mixed-domain research entities like veh
   assert.ok(types.has("IDENTIFIER"));
   assert.ok(types.has("LOCATION"));
   assert.ok(types.has("PERSON"));
+});
+
+test("analyzeDocument expands identified targets into facilities documents devices comms and financial artifacts", async () => {
+  const sourceText = `
+  On 2026-04-15 Maya Cohen uploaded Report Q4-77 from Harbor Clinic Building A.
+  Telegram @bluepilot_ops and WhatsApp Channel RED-LINE coordinated with ops@relay-observer.example.
+  Device Gateway-7 and Server relay-core were observed beside Container MSCU7654321 and Pallet PX-44.
+  Payment trail referenced IBAN GB82WEST12345698765432 and SWIFT DEUTDEFF under Contract ALPHA-9.
+  `;
+
+  const result = await analyzeDocument(sourceText);
+  const names = new Set(result.entities.map((entity) => entity.name));
+  const types = new Set(result.entities.map((entity) => entity.type));
+
+  assert.ok(names.has("Harbor Clinic Building") || names.has("Building A"));
+  assert.ok(names.has("Report Q4-77"));
+  assert.ok(names.has("@bluepilot_ops") || names.has("Telegram @bluepilot_ops"));
+  assert.ok(names.has("ops@relay-observer.example"));
+  assert.ok(names.has("Device Gateway") || names.has("Server relay-core") || names.has("Gateway-7"));
+  assert.ok(names.has("MSCU7654321") || names.has("Container MSCU7654321"));
+  assert.ok(names.has("GB82WEST12345698765432"));
+  assert.ok(names.has("Contract ALPHA-9") || names.has("ALPHA-9"));
+  assert.ok(types.has("FACILITY"));
+  assert.ok(types.has("DOCUMENT"));
+  assert.ok(types.has("COMMUNICATION_CHANNEL"));
+  assert.ok(types.has("DEVICE"));
+  assert.ok(types.has("CARGO") || types.has("IDENTIFIER"));
+  assert.ok(types.has("FINANCIAL_ACCOUNT"));
 });
 
 test("analyzeDocument detects person names from Hebrew and English action context", async () => {

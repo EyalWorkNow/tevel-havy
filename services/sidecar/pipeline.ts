@@ -88,8 +88,17 @@ export const runFastExtractionPipeline = (
 export const buildPipelineLexicalIndex = (payload: SidecarExtractionPayload): SidecarLexicalIndex =>
   buildLexicalIndex(payload);
 
+const lexicalIndexCache = new WeakMap<SidecarExtractionPayload, SidecarLexicalIndex>();
+
 export const searchPipelinePayload = (
   payload: SidecarExtractionPayload,
   query: string,
   limit = 5,
-): LexicalSearchHit[] => searchLexicalIndex(buildLexicalIndex(payload), query, limit);
+): LexicalSearchHit[] => {
+  let index = lexicalIndexCache.get(payload);
+  if (!index) {
+    index = buildLexicalIndex(payload);
+    lexicalIndexCache.set(payload, index);
+  }
+  return searchLexicalIndex(index, query, limit);
+};

@@ -37,7 +37,12 @@ export const buildClaimLayer = (
     const subjectEntityId =
       (claim.subject_mention_ids || []).map((id) => mentionEntityMap[id]).find(Boolean) ||
       (claim.speaker_mention_ids || []).map((id) => mentionEntityMap[id]).find(Boolean);
-    if (!subjectEntityId) return;
+    if (!subjectEntityId) {
+      console.warn(
+        `[claims] Dropped claim ${claim.claim_id} (${claim.claim_type}): no resolvable subject entity among ${(claim.subject_mention_ids || []).length} subject + ${(claim.speaker_mention_ids || []).length} speaker mention(s)`,
+      );
+      return;
+    }
     const objectEntityId = (claim.object_mention_ids || []).map((id) => mentionEntityMap[id]).find(Boolean);
 
     claims.push({

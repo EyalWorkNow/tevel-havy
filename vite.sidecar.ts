@@ -34,6 +34,10 @@ import {
   splitEntityRecord,
 } from "./services/sidecar/entityIntelligence/store";
 import { SidecarExtractionPayload } from "./services/sidecar/types";
+import { runVersionValidityEngine } from "./services/sidecar/versionValidity/service";
+import { getVersionValidityReport } from "./services/sidecar/versionValidity/store";
+import { verifyAnswerCitations } from "./services/sidecar/citationVerification/service";
+import { getLatestCitationVerificationRun } from "./services/sidecar/citationVerification/store";
 
 type JsonHandler = (payload: any) => Promise<unknown> | unknown;
 
@@ -344,6 +348,33 @@ const handleRunEntityIntelligence: JsonHandler = async (payload) => {
   });
 };
 
+const handleRunVersionValidity: JsonHandler = async (payload) => {
+  const caseId = typeof payload.caseId === "string" ? payload.caseId : `case_${Date.now()}`;
+  const extractionPayload = payload.payload && typeof payload.payload === "object"
+    ? payload.payload as SidecarExtractionPayload
+    : null;
+  if (!extractionPayload) {
+    throw new Error("Missing grounded extraction payload for version validity");
+  }
+  return await runVersionValidityEngine({ caseId, payload: extractionPayload });
+};
+
+const handleVerifyCitations: JsonHandler = async (payload) => {
+  const caseId = typeof payload.caseId === "string" ? payload.caseId : `case_${Date.now()}`;
+  const answerText = typeof payload.answerText === "string" ? payload.answerText : "";
+  if (!answerText.trim()) {
+    throw new Error("Missing answer text for citation verification");
+  }
+  return await verifyAnswerCitations({
+    caseId,
+    answerId: typeof payload.answerId === "string" ? payload.answerId : undefined,
+    answerText,
+    retrievalArtifacts: payload.retrievalArtifacts,
+    versionValidity: payload.versionValidity,
+    candidateEvidenceIds: Array.isArray(payload.candidateEvidenceIds) ? payload.candidateEvidenceIds : undefined,
+  });
+};
+
 const createSidecarMiddleware = (): Connect.NextHandleFunction => {
   const postRoutes = new Map<string, JsonHandler>([
     [`${SIDE_CAR_PREFIX}/parse-upload`, handleParseUpload],
@@ -354,6 +385,8 @@ const createSidecarMiddleware = (): Connect.NextHandleFunction => {
     ["/api/persons/resolve", handleResolvePersons],
     ["/api/knowledge/enrich", handleEnrichKnowledge],
     ["/api/resolution/run", handleRunEntityIntelligence],
+    ["/api/version-validity/run", handleRunVersionValidity],
+    ["/api/citation/verify", handleVerifyCitations],
   ]);
 
   return async (req, res, next) => {
@@ -363,6 +396,7 @@ const createSidecarMiddleware = (): Connect.NextHandleFunction => {
     const entityMutationRoute = /^\/api\/entities\/[^/]+\/(?:merge|split|regenerate-summary)$/.test(url);
     const entityReadRoute = /^\/api\/entities\/[^/]+(?:\/(?:timeline|claims|mentions|relations|summary|conflicts|candidate-decisions|debug-report|reference))?$/.test(url);
     const caseEntityIntelligenceRoute = /^\/api\/cases\/[^/]+\/(?:entity-intelligence|entity-graph|ambiguous-mentions)$/.test(url);
+    const caseTrustRoute = /^\/api\/cases\/[^/]+\/(?:version-validity|citation-verification)$/.test(url);
 
     const locationMatch = method === "GET" ? url.match(/^\/api\/locations\/([^/]+)$/) : null;
     if (locationMatch) {
@@ -445,6 +479,28 @@ const createSidecarMiddleware = (): Connect.NextHandleFunction => {
         return;
       }
       sendJson(res, 200, intelligence);
+      return;
+    }
+
+    const caseVersionValidityMatch = method === "GET" ? url.match(/^\/api\/cases\/([^/]+)\/version-validity$/) : null;
+    if (caseVersionValidityMatch) {
+      const report = await getVersionValidityReport(decodeURIComponent(caseVersionValidityMatch[1]));
+      if (!report) {
+        sendJson(res, 404, { error: "Case version validity report not found" });
+        return;
+      }
+      sendJson(res, 200, report);
+      return;
+    }
+
+    const caseCitationVerificationMatch = method === "GET" ? url.match(/^\/api\/cases\/([^/]+)\/citation-verification$/) : null;
+    if (caseCitationVerificationMatch) {
+      const run = await getLatestCitationVerificationRun(decodeURIComponent(caseCitationVerificationMatch[1]));
+      if (!run) {
+        sendJson(res, 404, { error: "Case citation verification run not found" });
+        return;
+      }
+      sendJson(res, 200, run);
       return;
     }
 
@@ -543,10 +599,13 @@ const createSidecarMiddleware = (): Connect.NextHandleFunction => {
       url !== "/api/persons/resolve" &&
       url !== "/api/knowledge/enrich" &&
       url !== "/api/resolution/run" &&
+      url !== "/api/version-validity/run" &&
+      url !== "/api/citation/verify" &&
       !documentExtractRoute &&
       !entityMutationRoute &&
       !entityReadRoute &&
-      !caseEntityIntelligenceRoute
+      !caseEntityIntelligenceRoute &&
+      !caseTrustRoute
     ) {
       next();
       return;
