@@ -99,7 +99,8 @@ const baseEntityAliases: Record<string, string> = {
 };
 
 const INTEL_RELATION_CUES: Array<{ terms: string[]; type: string }> = [
-  { terms: ["funded", "financed", "backed", "paid", "מימן", "מימנה"], type: "FUNDED" },
+  // Core relations — original types preserved for backward compat
+  { terms: ["funded", "financed", "backed", "paid", "מימן", "מימנה", "מומן", "מומנה"], type: "FUNDED" },
   {
     terms: ["funded by", "owned by", "belongs to", "reported to", "כפוף ל", "שייך ל", "בבעלות", "בשליטת"],
     type: "OWNED_BY",
@@ -114,6 +115,40 @@ const INTEL_RELATION_CUES: Array<{ terms: string[]; type: string }> = [
   },
   { terms: ["used", "operated", "activated", "deployed", "הפעיל", "השתמש ב", "הופעל", "נפרס"], type: "USED_IN" },
   { terms: ["linked", "associated", "ties", "tied", "with", "קשור ל", "מקושר ל", "זוהה עם", "לצד"], type: "ASSOCIATED_WITH" },
+
+  // Extended Hebrew operative / investigative relation types
+  { terms: ["transferred", "wire", "העביר", "העבירה", "הועבר", "שלח כסף", "שולם ל", "תשלום ל"], type: "TRANSFERS_MONEY_TO" },
+  { terms: ["pays", "paid to", "שילם ל", "שילמה ל", "תשלום אל"], type: "PAYS" },
+  {
+    terms: ["owned by", "מחזיק ב", "בעל מניות", "זכויות הצבעה", "נהנה סופי", "בעל זכות חתימה"],
+    type: "OWNS",
+  },
+  { terms: ["controls", "שולט ב", "מנהל", "מפקח על"], type: "CONTROLS" },
+  { terms: ["shareholder", "בעל מניות", "מחזיק מניות"], type: "SHAREHOLDER_OF" },
+  { terms: ["advises", "consulted", "יועץ של", "שימש יועץ", "פועל עבור", "עובד עבור", "מייעץ ל"], type: "ADVISES" },
+  { terms: ["consults for", "consulted for", "מייעץ עבור", "שימש כיועץ של"], type: "CONSULTS_FOR" },
+  { terms: ["leaked", "leaked to", "דלף", "זלג", "הדליף", "דליפה אל", "גישה בלתי מורשית"], type: "LEAKS" },
+  { terms: ["accessed", "downloaded", "התחבר ל", "ניגש ל", "הוריד", "גישה ל"], type: "ACCESSES" },
+  { terms: ["appeared in metadata", "מופיע במטא-דאטה", "זוהה במסמך"], type: "APPEARS_IN_METADATA" },
+  { terms: ["delayed", "released", "עיכב", "שוחרר", "עיכוב", "שחרור"], type: "DELAYS" },
+  { terms: ["transports", "shipped", "shipped via", "שולח", "שולח דרך", "שפעל ב"], type: "TRANSPORTS" },
+  {
+    terms: ["שלח הודעה ל", "תכתובת עם", "ערוץ מוצפן", "VOIP", "שוחח עם"],
+    type: "COMMUNICATES_WITH",
+  },
+  { terms: ["directed", "commanded", "ordered", "הנחה", "כיוון", "הפעיל", "פיקד", "אישור אחרון", "הוביל"], type: "COMMANDS" },
+  { terms: ["coordinates with", "מתאם עם"], type: "COORDINATES_WITH" },
+  { terms: ["uses cover identity", "cover name", "alias for", "מכסה", "שם כיסוי", "זהות כיסוי"], type: "USES_COVER_IDENTITY" },
+  { terms: ["shares infrastructure", "אותו מחסן", "אותו שרת", "אותו רכב", "אותו נאמן", "תשתית משותפת"], type: "SHARES_INFRASTRUCTURE_WITH" },
+  { terms: ["linked by vehicle", "אותו רכב", "זוהה בו רכב"], type: "LINKED_BY_VEHICLE" },
+  { terms: ["linked by account", "אותו חשבון", "אותו ארנק"], type: "LINKED_BY_ACCOUNT" },
+  { terms: ["linked by server", "אותו שרת", "אותה כתובת IP"], type: "LINKED_BY_SERVER" },
+  { terms: ["linked by warehouse", "אותו מחסן", "אותה נקודת לוגיסטיקה"], type: "LINKED_BY_WAREHOUSE" },
+  { terms: ["linked by document", "אותו מסמך", "אותה טיוטה", "מסמך משותף"], type: "LINKED_BY_DOCUMENT" },
+  { terms: ["linked by ownership", "רשום על שם", "ביטוח משולם מתוך", "בעלות משותפת"], type: "LINKED_BY_OWNERSHIP" },
+  { terms: ["linked by timing", "אותו זמן", "באותה שעה", "רצף זמנים"], type: "LINKED_BY_TIMING" },
+  { terms: ["member of", "חבר ב", "כפוף ל", "reported to"], type: "MEMBER_OF" },
+  { terms: ["related to", "נוגע ל", "מעורב ב"], type: "RELATED_TO" },
 ];
 
 const LEGAL_RELATION_CUES: Array<{ terms: string[]; type: string }> = [
@@ -331,6 +366,14 @@ const PROFILE_DETECTION_SIGNALS: Record<ResearchProfileId, ProfileSignal[]> = {
     { label: "intelligence vocabulary", weight: 4, regex: /\b(?:intelligence|osint|sigint|humint|target|threat|operation|operative|facility|asset|smuggling|surveillance|watchlist|cell)\b/gi },
     { label: "Hebrew intelligence vocabulary", weight: 4, regex: /(?:מודיעין|יעד|איום|מבצע|מבצעי|תשתית|איסוף|סיכול|מעקב|חוליה)/g },
     { label: "operational entities", weight: 2, regex: /\b(?:vehicle|drone|warehouse|port|border|route|handoff|encrypted|telegram)\b/gi },
+    // Stronger Hebrew intel signals — each match gives high weight to avoid FINANCE false positive
+    { label: "Hebrew classification/report markers", weight: 6, regex: /(?:דו["״]ח\s*מודיעין|סיווג\s*[:：]|צי["״]ח|TSIYACH)/g },
+    { label: "Hebrew intelligence agencies", weight: 6, regex: /(?:שב["״]כ|אמ["״]ן|שב["״]ס|יחידה\s*8200|\b8200\b)/g },
+    { label: "Hebrew SIGINT/HUMINT/OSINT", weight: 5, regex: /(?:\bSIGINT\b|סיגינט|\bHUMINT\b|יומינט|\bOSINT\b)/g },
+    { label: "Hebrew operative vocabulary", weight: 5, regex: /(?:מפעיל\s*חיצוני|הכוונה\s*חיצונית|מסר\s*יורט|יירוט|תמליל|פענוח|איכון|קמ["״]ן|חמ["״]ל|דירת\s*מסתור)/g },
+    { label: "Hebrew procurement investigation", weight: 5, regex: /(?:מכרז|ועדת\s*מכרזים|דליפת?\s*מסמכ|שינוי\s*משקלים|נהנה\s*סופי|חברת?\s*קש)/g },
+    { label: "Mossad / Israeli intel org", weight: 4, regex: /\bמוסד\b/g },
+    { label: "Hebrew observation/surveillance", weight: 3, regex: /(?:תצפית|מעקב\s*חיצוני|איתור\s*מיקום)/g },
   ],
   LEGAL: [
     { label: "contract vocabulary", weight: 5, regex: /\b(?:agreement|contract|clause|section|article|schedule|appendix|party|parties|governing law|jurisdiction|venue|remedy|indemnity|liability|breach|termination)\b/gi },
@@ -338,12 +381,16 @@ const PROFILE_DETECTION_SIGNALS: Record<ResearchProfileId, ProfileSignal[]> = {
     { label: "Hebrew legal vocabulary", weight: 5, regex: /(?:הסכם|חוזה|סעיף|נספח|דין\s+חל|סמכות\s+שיפוט|שיפוי|פיצוי|הפרה|ביטול|חייב|מחויב|רשאי|זכאי)/g },
   ],
   FINANCE: [
-    { label: "money amount", weight: 6, regex: /\b(?:USD|EUR|ILS|NIS)\s?\d[\d,]*(?:\.\d+)?|[$€₪]\s?\d[\d,]*(?:\.\d+)?|\b\d[\d,]*(?:\.\d+)?\s?(?:USD|EUR|ILS|NIS|ש"ח|דולר|אירו)\b/gi },
-    { label: "financial metric", weight: 5, regex: /\b(?:revenue|EBITDA|ARR|MRR|gross margin|net income|free cash flow|cash burn|runway|ROI|IRR|NPV|YoY|QoQ|P&L|balance sheet|cash flow)\b/gi },
-    { label: "transaction language", weight: 5, regex: /\b(?:invoice|payment|wire transfer|settlement|transfer|credit facility|loan|bond|equity|debit|credit|counterparty|receivable|payable)\b/gi },
+    // Reduced weight for raw money amounts — investigative docs often mention money flows
+    { label: "money amount", weight: 3, regex: /\b(?:USD|EUR|ILS|NIS)\s?\d[\d,]*(?:\.\d+)?|[$€₪]\s?\d[\d,]*(?:\.\d+)?|\b\d[\d,]*(?:\.\d+)?\s?(?:USD|EUR|ILS|NIS|ש"ח|דולר|אירו)\b/gi },
+    // Strong financial metric language that does NOT appear in investigative docs
+    { label: "financial metric", weight: 6, regex: /\b(?:revenue|EBITDA|ARR|MRR|gross margin|net income|free cash flow|cash burn|runway|ROI|IRR|NPV|YoY|QoQ|P&L|balance sheet)\b/gi },
+    { label: "SEC/filing vocabulary", weight: 8, regex: /\b(?:SEC|SECURITIES AND EXCHANGE COMMISSION|FORM 10-K|FORM 10-Q|FORM 20-F|annual filing|quarterly filing|CIK|registrant|GAAP|IFRS|MD&A)\b/gi },
+    { label: "transaction language", weight: 4, regex: /\b(?:invoice|wire transfer|settlement|credit facility|loan|bond|equity|debit|credit|counterparty|receivable|payable)\b/gi },
     { label: "banking identifiers", weight: 6, regex: /\b(?:IBAN|SWIFT|BIC|account number|bank account|ledger|GL|invoice\s+[A-Z0-9#/_-]+)\b/gi },
-    { label: "fiscal period", weight: 4, regex: /\b(?:Q[1-4]\s?20\d{2}|FY\s?20\d{2}|fiscal\s+year\s+20\d{2})\b/gi },
-    { label: "Hebrew finance vocabulary", weight: 5, regex: /(?:הכנסות|רווח|תזרים|חשבונית|תשלום|העברה|הלוואה|אשראי|אג["״]?ח|מניה|סיכון\s+נזילות|חשיפה|יתרה|מאזן)/g },
+    { label: "fiscal period", weight: 5, regex: /\b(?:Q[1-4]\s?20\d{2}|FY\s?20\d{2}|fiscal\s+year\s+20\d{2})\b/gi },
+    // Hebrew finance: only genuine accounting/reporting vocab, not investigative money terms
+    { label: "Hebrew finance vocabulary", weight: 4, regex: /(?:הכנסות|רווח\s+גולמי|רווח\s+נקי|תזרים\s+מזומנים|חשבונית|הלוואה|אשראי|אג["״]?ח|מניה|סיכון\s+נזילות|יתרה|מאזן\s+חשבונאי)/g },
   ],
   ACADEMIC: [
     { label: "research-paper vocabulary", weight: 5, regex: /\b(?:abstract|method|methodology|dataset|corpus|benchmark|baseline|experiment|evaluation|ablation|limitation|future work|hypothesis|research question)\b/gi },
@@ -425,7 +472,17 @@ const resolveAutoProfile = (ranked: ResearchProfileRank[]): ResearchProfileId =>
   const top = ranked[0];
   if (!top || top.score <= 0) return "INTEL";
 
+  const intelRank = ranked.find((rank) => rank.profileId === "INTEL");
   const strongestNonIntel = ranked.find((rank) => rank.profileId !== "INTEL");
+
+  // If INTEL is top and has strong score, don't let other profiles override it easily
+  if (top.profileId === "INTEL" && intelRank && intelRank.score >= 16) {
+    // Non-INTEL must be substantially stronger to override
+    if (!strongestNonIntel || strongestNonIntel.score < intelRank.score * 0.75) {
+      return "INTEL";
+    }
+  }
+
   if (
     top.profileId === "INTEL" &&
     strongestNonIntel &&

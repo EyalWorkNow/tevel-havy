@@ -14,6 +14,8 @@
     "bench:knowledge": "tsx scripts/benchmark-knowledge-enrichment.ts",
     "bench:entity-intelligence": "tsx scripts/benchmark-entity-intelligence.ts",
     "bench:trust": "tsx scripts/benchmark-version-trust.ts",
+    "bench:intel-he": "tsx scripts/benchmark-live-research-intel-he.ts",
+    "bench:cross-doc": "tsx scripts/benchmark-cross-document-synthesis.ts",
     "test:sidecar": "tsx --test tests/sidecar/*.test.ts"
   },
   "dependencies": {

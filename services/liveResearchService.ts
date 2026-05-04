@@ -9,6 +9,7 @@ import {
   type ReasoningEngineSurface,
   type ReasoningFailureKind,
 } from "./intelligenceService";
+import { detectDocumentDomain, isIntelligenceCompatibleDomain, domainLabel } from "./documentDomain";
 import type { IntelligencePackage, StudyItem, Entity, Relation, ContextCard, Insight, TimelineEvent, Statement, IntelQuestion, IntelTask, ChatMessage } from "../types";
 import type { RetrievalArtifacts, RetrievalEvidenceBundle, RetrievalEvidenceHit } from "./sidecar/retrieval";
 import type { StructuredSummaryPanel } from "./sidecar/summarization/contracts";
@@ -21,12 +22,19 @@ import {
   type FcfR3AuditSummary,
   type FcfR3ReadPathRun,
 } from "./fcfR3Service";
+import {
+  synthesizeAcrossDocuments,
+  formatCrossDocumentSynthesisHebrew,
+  formatCrossDocumentSynthesisEnglish,
+} from "./intelligence/crossDocumentSynthesis";
 import { buildFcfR3PersistedRun } from "./fcfR3/contracts";
 import { persistFcfR3Run } from "./fcfR3/store";
 import { verifyAnswerCitations } from "./sidecar/citationVerification/service";
 import type { ResearchProfileId } from "./researchProfiles";
 
 const MAX_SELECTED_STUDIES = 4;
+const CROSS_DOCUMENT_QUERY_RE =
+  /\b(?:all database|entire database|global search|cross[-\s]?case|across cases|compare cases|all reports|other cases|full db|whole corpus)\b|בכל המאגר|כל המאגר|חיפוש גלובלי|בין כל התיקים|השווה בין.*תיקים|עוד תיקים|כל הדוחות|בין הקבצים|שלושת הקבצים|כל הקבצים|הצלבה|השוואה(?:\s*בין)|דפוס\s*חוזר|תמונה\s*מערכתית|מחקר\s*רב.מסמכי|סינתזה\s*חוצת/i;
 const MAX_MATCHED_SIGNALS = 5;
 const MAX_EVIDENCE_PREVIEWS = 3;
 const MAX_RAW_SOURCE_EXCERPTS = 3;
@@ -215,7 +223,7 @@ type StudySelectionResult = {
   ambiguous: boolean;
 };
 
-type SecDocumentKind = "FORM 10-K" | "FORM 10-Q" | "FORM 20-F" | "FORM 8-K" | "FORM 4" | "FORM 3" | "FORM 5" | "SEC document";
+type SecDocumentKind = "FORM 10-K" | "FORM 10-Q" | "FORM 20-F" | "FORM 8-K" | "FORM 4" | "FORM 3" | "FORM 5" | "SEC document" | "unknown";
 
 type RawSourceExcerptOptions = {
   documentKind?: SecDocumentKind;
@@ -349,10 +357,17 @@ const splitTerms = (value: string): string[] =>
 
 const normalizedTokens = (value: string): string[] => normalize(value).split(/\s+/).filter(Boolean);
 
-const hasFinanceOrSecIntent = (question: string): boolean =>
-  /\b(?:sec|10-k|10-q|20-f|8-k|s-1|filing|annual report|quarterly report|financial analysis|finance|financial|revenue|income statement|balance sheet|cash flow|ebitda|gross margin|net income|debt|liquidity|assets|liabilities)\b|מסמכי?\s*sec|פיננס|הכנסות|רווח|תזרים|מאזן|חוב|נזילות/i.test(
-    question,
-  );
+// Returns true only when the user is explicitly asking for SEC/financial-metric analysis.
+// Hebrew intelligence/investigative queries mentioning money do NOT trigger this.
+const hasFinanceOrSecIntent = (question: string): boolean => {
+  // Strong explicit SEC intent
+  if (/\b(?:sec|10-k|10-q|20-f|8-k|s-1|filing|annual report|quarterly report)\b|מסמכי?\s*sec/i.test(question)) return true;
+  // Quantitative financial metric request (not investigative money mention)
+  if (/\b(?:revenue|income statement|balance sheet|cash flow|ebitda|gross margin|net income|liquidity|assets|liabilities|P&L|free cash flow)\b/i.test(question)) return true;
+  // Hebrew finance metric request — only when paired with financial metric nouns, not general investigative
+  if (/(?:ניתוח\s*פיננסי\s*של\s*מסמכי|דוח\s*כספי|מאזן\s*חשבונאי|רווח\s*גולמי|תזרים\s*מזומנים|EBITDA|הכנסות\s*(?:שנתיות|רבעוניות))/i.test(question)) return true;
+  return false;
+};
 
 const detectSecDocumentKind = (rawText = "", title = ""): SecDocumentKind => {
   const sample = `${title}\n${rawText.slice(0, 30000)}`;
@@ -363,8 +378,10 @@ const detectSecDocumentKind = (rawText = "", title = ""): SecDocumentKind => {
   if (/\bFORM\s+4\b/i.test(sample)) return "FORM 4";
   if (/\bFORM\s+3\b/i.test(sample)) return "FORM 3";
   if (/\bFORM\s+5\b/i.test(sample)) return "FORM 5";
-  if (/\bSECURITIES AND EXCHANGE COMMISSION\b|\bSEC\b/i.test(sample)) return "SEC document";
-  return "SEC document";
+  // "SEC" alone is not enough — require explicit SECURITIES AND EXCHANGE COMMISSION text
+  if (/\bSECURITIES AND EXCHANGE COMMISSION\b/i.test(sample)) return "SEC document";
+  // Default to "unknown" — never assume SEC for documents that lack explicit SEC evidence
+  return "unknown";
 };
 
 const isFinancialSecReport = (kind: SecDocumentKind): boolean =>
@@ -538,7 +555,7 @@ const scoreRawSourceSegment = (
   matchedEntities: string[],
   options: RawSourceExcerptOptions,
 ): number => {
-  const documentKind = options.documentKind || "SEC document";
+  const documentKind = options.documentKind || "unknown";
   const financeIntent = Boolean(options.financeIntent);
   let score = scoreEvidenceSnippet(segment, queryTerms, queryPhrases, matchedEntities) + (index === 0 ? 0.15 : 0);
 
@@ -953,10 +970,12 @@ const chooseStudies = (question: string, studies: StudyItem[], selectedStudyIds?
 
   const scored = scopedStudies.map((study) => scoreStudy(question, study)).sort((left, right) => right.relevance - left.relevance);
   const documentGroundedQuestion = isDocumentGroundedQuestion(question);
+  // Cross-document query: user explicitly wants all uploaded files compared/synthesized
+  const crossDocumentQuery = CROSS_DOCUMENT_QUERY_RE.test(question);
   const maxSelectedStudies =
     selectedStudyIds && selectedStudyIds.length > 0
       ? MAX_SELECTED_STUDIES
-      : isGlobalDbSearchQuery(question) || documentGroundedQuestion
+      : isGlobalDbSearchQuery(question) || documentGroundedQuestion || crossDocumentQuery
         ? MAX_SELECTED_STUDIES
         : 1;
   const competingContexts = scored.slice(0, 3).map((entry) => ({
@@ -966,6 +985,26 @@ const chooseStudies = (question: string, studies: StudyItem[], selectedStudyIds?
   }));
   const top = scored[0];
   const runnerUp = scored[1];
+
+  // Per-source coverage guarantee: for explicit cross-document queries, include all scoped studies
+  // (up to MAX_SELECTED_STUDIES) regardless of lexical match score.
+  if (crossDocumentQuery && !selectedStudyIds?.length) {
+    const allScored = scored.slice(0, maxSelectedStudies);
+    if (allScored.length > 0) {
+      const best = allScored[0];
+      return {
+        selected: allScored,
+        activeContextId: best.study.id,
+        activeContextReason: "cross-document synthesis — all sources included for coverage",
+        activeContextConfidence: Math.max(best.activeContextConfidence, 0.72),
+        queryEntityMentionsInContext: best.queryEntityMentions,
+        aliasMentionsInContext: best.aliasMentions,
+        numberOfRelevantEvidenceAtoms: best.relevantEvidenceAtoms,
+        competingContexts,
+        ambiguous: false,
+      };
+    }
+  }
 
   if (documentGroundedQuestion && !selectedStudyIds?.length && !isGlobalDbSearchQuery(question)) {
     const documentGrounded = scored.filter(
@@ -1718,6 +1757,7 @@ const buildSourceGroundedReadPath = (
     const study = studies.find((candidate) => candidate.id === source.id);
     const rawText = study?.intelligence.raw_text || study?.intelligence.clean_text || "";
     const documentKind = detectSecDocumentKind(rawText, source.title);
+    const detectedDomain = detectDocumentDomain(rawText, { title: source.title });
     const analysisRole = isFinancialSecReport(documentKind)
       ? "financial-report"
       : isOwnershipSecForm(documentKind)
@@ -1766,6 +1806,9 @@ const buildSourceGroundedReadPath = (
         text: truncateText(text, MAX_RAW_SOURCE_EXCERPT_CHARS),
       });
     });
+    // Attach detected domain to summary for use in context building
+    (sourceSummaries[sourceSummaries.length - 1] as SourceGroundedSourceSummary & { detectedDomain?: string }).detectedDomain =
+      domainLabel(detectedDomain.domain);
   });
 
   const retrievalContext = [
@@ -1774,15 +1817,19 @@ const buildSourceGroundedReadPath = (
     "",
     ...corpus.sources.map((source) => {
       const sourceEvidence = evidenceItems.filter((item) => item.sourceTitle === source.title);
-      const sourceSummary = sourceSummaries.find((summary) => summary.id === source.id);
+      const sourceSummary = sourceSummaries.find((summary) => summary.id === source.id) as (SourceGroundedSourceSummary & { detectedDomain?: string }) | undefined;
+      // Use domain-aware label — only show SEC_FORM for genuine SEC documents
+      const docTypeLabel = isFinancialSecReport(sourceSummary?.documentKind || "unknown") || isOwnershipSecForm(sourceSummary?.documentKind || "unknown")
+        ? `SEC_FORM: ${sourceSummary?.documentKind} | ROLE: ${sourceSummary?.analysisRole}`
+        : `DOC_TYPE: ${sourceSummary?.detectedDomain || "General Document"} | ROLE: document-analysis`;
       const ownershipNote =
         sourceSummary?.analysisRole === "ownership-form"
           ? "ANALYSIS NOTE: This SEC filing is an ownership or insider-transaction form. It is not a full financial statement filing."
           : "";
       return [
         `DB RECORD: ${source.title}`,
-        `COMPANY_OR_RECORD: ${sourceSummary?.displayName || source.title}`,
-        `SEC_FORM: ${sourceSummary?.documentKind || "SEC document"} | ROLE: ${sourceSummary?.analysisRole || "sec-context"}`,
+        `RECORD_NAME: ${sourceSummary?.displayName || source.title}`,
+        docTypeLabel,
         `DATE: ${source.date} | SOURCE: ${source.source} | RELEVANCE: ${formatPercent(source.relevance)}`,
         ownershipNote,
         sourceEvidence.length
@@ -1794,13 +1841,18 @@ const buildSourceGroundedReadPath = (
               )
               .join("\n\n")
           : "No source excerpt survived selection for this record.",
-      ].join("\n");
+      ].filter(Boolean).join("\n");
     }),
   ]
     .join("\n\n")
     .slice(0, maxContextChars);
 
   const profileLabel = corpus.package.research_profile || "mixed";
+  // Only emit sec_forms when there are actual SEC documents; otherwise use doc_types
+  const hasSecDocs = sourceSummaries.some((summary) => summary.documentKind !== "unknown");
+  const docTypeLine = hasSecDocs
+    ? `sec_forms=${sourceSummaries.map((summary) => `${summary.displayName}:${summary.documentKind}`).join(";")}`
+    : `doc_types=${sourceSummaries.map((summary) => `${summary.displayName}:${(summary as SourceGroundedSourceSummary & { detectedDomain?: string }).detectedDomain || "unknown"}`).join(";")}`;
   const knowledgeSnapshot = [
     "SOURCE-GROUNDED DB SNAPSHOT",
     `records=${corpus.sources.length}/${corpus.scope.scopedStudies}`,
@@ -1809,7 +1861,7 @@ const buildSourceGroundedReadPath = (
     constraints.hebrewOnly ? "answer_language=hebrew" : "",
     constraints.suppressEvidenceIds || constraints.suppressSystemCodes ? "output_ids=suppressed" : "",
     `source_excerpt_count=${evidenceItems.length}`,
-    `sec_forms=${sourceSummaries.map((summary) => `${summary.displayName}:${summary.documentKind}`).join(";")}`,
+    docTypeLine,
     corpus.scope.active_context_reason ? `scope_reason=${corpus.scope.active_context_reason}` : "",
   ]
     .filter(Boolean)
@@ -1841,55 +1893,91 @@ const buildSourceGroundedFallbackAnswer = (
   engineTrace: LiveResearchEngineTrace,
   _constraints: LiveResearchOutputConstraints = detectOutputConstraints(question),
 ): string => {
-  const hebrew = /[\u0590-\u05FF]/u.test(question);
+  const hebrew = /[֐-׿]/u.test(question);
+  const financeIntent = hasFinanceOrSecIntent(question);
+  const allSecDocs = readPath.sourceSummaries.length > 0 && readPath.sourceSummaries.every((summary) =>
+    isFinancialSecReport(summary.documentKind) || isOwnershipSecForm(summary.documentKind) || summary.documentKind === 'SEC document',
+  );
+  const useSecFraming = financeIntent && allSecDocs;
+
   const sourceLines = readPath.sourceSummaries.map((summary) => {
     const sourceText = readPath.evidenceItems
       .filter((item) => item.sourceId === summary.id)
       .map((item) => item.text)
-      .join(" ");
-    const signals = summarizeFinancialSignals(sourceText);
+      .join(' ');
+    const detectedDocLabel = (summary as SourceGroundedSourceSummary & { detectedDomain?: string }).detectedDomain
+      || (summary.documentKind !== 'unknown' ? summary.documentKind : 'מסמך');
+    const excerptCount = readPath.evidenceItems.filter((item) => item.sourceId === summary.id).length;
 
     if (hebrew) {
-      if (summary.analysisRole === "ownership-form") {
-        return `- ${summary.displayName}: זה ${summary.documentKind}. זה טופס על שינוי החזקה או עסקת ניירות ערך, לא דוח כספי מלא, ולכן הוא לא מספיק לניתוח הכנסות, רווחיות, תזרים או מאזן.`;
+      if (useSecFraming && summary.analysisRole === 'ownership-form') {
+        return `- ${summary.displayName}: ${detectedDocLabel}. זה טופס על שינוי החזקה או עסקת ניירות ערך, לא דוח כספי מלא.`;
       }
-      const signalText = signals.length
-        ? `הקטעים שנבחרו מאפשרים לבדוק בעיקר ${signals.join(", ")}.`
-        : "בקטעים שנבחרו לא נמצאו מספיק נתונים מספריים ברורים לניתוח כספי מלא.";
-      return `- ${summary.displayName}: זה ${summary.documentKind}. ${signalText}`;
+      if (useSecFraming) {
+        const signals = summarizeFinancialSignals(sourceText);
+        const signalText = signals.length
+          ? `הקטעים שנבחרו מאפשרים לבדוק בעיקר ${signals.join(', ')}.`
+          : 'בקטעים שנבחרו לא נמצאו מספיק נתונים מספריים ברורים לניתוח כספי מלא.';
+        return `- ${summary.displayName}: ${detectedDocLabel}. ${signalText}`;
+      }
+      return `- ${summary.displayName}: ${detectedDocLabel}. נבחרו ${excerptCount} קטעי עדות לניתוח.`;
     }
 
-    if (summary.analysisRole === "ownership-form") {
-      return `- ${summary.displayName}: ${summary.documentKind}. This is an ownership or securities-transaction form, not a full financial filing, so it cannot support revenue, profitability, cash-flow, or balance-sheet analysis.`;
+    if (useSecFraming && summary.analysisRole === 'ownership-form') {
+      return `- ${summary.displayName}: ${detectedDocLabel}. Ownership/transaction form — cannot support financial statement analysis.`;
     }
-    const signalText = signals.length
-      ? `Selected excerpts support review of ${signals.join(", ")}.`
-      : "The selected excerpts do not contain enough clear numeric financial data for a full analysis.";
-    return `- ${summary.displayName}: ${summary.documentKind}. ${signalText}`;
+    if (useSecFraming) {
+      const signals = summarizeFinancialSignals(sourceText);
+      const signalText = signals.length
+        ? `Selected excerpts support review of ${signals.join(', ')}.`
+        : 'Selected excerpts do not contain enough numeric financial data for full analysis.';
+      return `- ${summary.displayName}: ${detectedDocLabel}. ${signalText}`;
+    }
+    return `- ${summary.displayName}: ${detectedDocLabel}. ${excerptCount} evidence excerpt(s) selected for analysis.`;
   });
 
   if (hebrew) {
     const opening = engineTrace.failureMessage
-      ? "הוחזרה תשובה מצומצמת מתוך קטעי המקור שנבחרו בלבד."
-      : "הניתוח מבוסס רק על קטעי המקור שנבחרו מהמסמכים שהועלו.";
-    const conclusion = readPath.sourceSummaries.some((summary) => summary.analysisRole === "ownership-form")
-      ? "המסקנה העיקרית: צריך להפריד בין דוחות כספיים מלאים לבין טופסי בעלות. Apple ו-Microsoft יכולים לשמש בסיס לניתוח כספי אם הם דוחות 10-K או דוח כספי דומה; Amazon כאן מוגבל אם המסמך שלו הוא Form 4."
-      : "המסקנה העיקרית: אפשר להמשיך לניתוח כספי רק מתוך המדדים שמופיעים בקטעים שנבחרו, בלי להשלים מידע מבחוץ.";
+      ? [
+          'Source-grounded fallback הוחזר בגלל timeout של מנוע ההסקה.',
+          '',
+          'כיסוי קריאה:',
+          `- קבצים שנשקלו: ${readPath.sourceSummaries.length}`,
+          `- קבצים עם עדות שנבחרה: ${readPath.sourceSummaries.filter((s) => readPath.evidenceItems.some((item) => item.sourceId === s.id)).length}`,
+          `- קטעי עדות זמינים: ${readPath.evidenceItems.length}`,
+        ].join('\n')
+      : 'הניתוח מבוסס רק על קטעי המקור שנבחרו מהמסמכים שהועלו.';
+    const conclusion = useSecFraming
+      ? 'המסקנה העיקרית: אפשר להמשיך לניתוח כספי רק מתוך המדדים שמופיעים בקטעים שנבחרו, בלי להשלים מידע מבחוץ.'
+      : 'השלב הבא: אחזור עדות מייצגת מכל קובץ, ריצת סינתזה חוצת-מסמכים על ישויות וקשרים.';
 
     return [
       opening,
-      sourceLines.length ? sourceLines.join("\n") : "לא נמצאו קטעי מקור מספיקים במסגרת ה-DB שנבחרה.",
+      sourceLines.length ? sourceLines.join('\n') : 'לא נמצאו קטעי מקור מספיקים במסגרת ה-DB שנבחרה.',
       conclusion,
-    ].join("\n\n");
+    ].join('\n\n');
   }
 
+  const opening = engineTrace.failureMessage
+    ? [
+        'Source-grounded fallback engaged because the reasoning engine timed out.',
+        '',
+        'Read coverage:',
+        `- Files considered: ${readPath.sourceSummaries.length}`,
+        `- Files with evidence selected: ${readPath.sourceSummaries.filter((s) => readPath.evidenceItems.some((item) => item.sourceId === s.id)).length}`,
+        `- Evidence excerpts available: ${readPath.evidenceItems.length}`,
+      ].join('\n')
+    : 'This analysis is based only on the selected source excerpts.';
+
+  const conclusion = useSecFraming
+    ? 'A complete financial analysis requires the selected records to contain revenue, profitability, cash flow, balance sheet, debt, liquidity, and risk data.'
+    : 'Next retrieval step: retrieve representative evidence from every uploaded file and run compact cross-document entity/relation synthesis.';
+
   return [
-    engineTrace.failureMessage
-      ? "A narrow source-grounded fallback was returned from the selected excerpts only."
-      : "This analysis is based only on the selected source excerpts.",
-    sourceLines.length ? sourceLines.join("\n") : "No sufficient source excerpts were found inside the selected DB scope.",
-    "A complete financial analysis requires the selected records to contain revenue, profitability, cash flow, balance sheet, debt, liquidity, and risk data.",
-  ].join("\n\n");
+    opening,
+    sourceLines.length ? sourceLines.join('\n') : 'No sufficient source excerpts were found inside the selected DB scope.',
+    conclusion,
+  ].join('\n\n');
 };
 
 const rawCharsForSources = (sources: LiveResearchSource[], studies: StudyItem[]): number =>
@@ -2565,6 +2653,24 @@ export const askLiveResearchQuestion = async (
   const fcfCaseId = buildLiveResearchCaseId(corpus, selectedStudyIds);
   const fcfAnswerId = buildLiveResearchAnswerId(fcfCaseId, question);
   let citationRun: CitationVerificationRun | undefined;
+
+  // For cross-document queries inject a compact synthesis block into the knowledge snapshot.
+  // This gives the model structural intel (shared actors, patterns) without touching the
+  // evidence retrieval context or citations.
+  const isCrossDocQuery = CROSS_DOCUMENT_QUERY_RE.test(question);
+  const crossDocSynthesisBlock = (() => {
+    if (!isCrossDocQuery || corpus.sources.length < 2) return "";
+    const hebrew = /[֐-׿]/u.test(question);
+    const scopedStudies = studies.filter((s) => corpus.sources.some((src) => src.id === s.id));
+    const synthesis = synthesizeAcrossDocuments(scopedStudies);
+    if (!synthesis.sharedEntities.length && !synthesis.crossFilePatterns.length) return "";
+    const formatted = hebrew
+      ? formatCrossDocumentSynthesisHebrew(synthesis)
+      : formatCrossDocumentSynthesisEnglish(synthesis);
+    // Keep it compact — up to 700 chars so it doesn't crowd out evidence
+    return `\nCROSS_DOC_SYNTHESIS:\n${formatted.slice(0, 700)}`;
+  })();
+
   const answerPackage: IntelligencePackage = {
     ...corpus.package,
     clean_text: fcfRun.materialized_context,
@@ -2585,7 +2691,7 @@ export const askLiveResearchQuestion = async (
       citationRun = run;
     },
     readPathContext: {
-      knowledgeSnapshot: fcfRun.knowledge_snapshot,
+      knowledgeSnapshot: fcfRun.knowledge_snapshot + crossDocSynthesisBlock,
       retrievalContext: fcfRun.materialized_context,
       candidateEvidenceIds: fcfRun.audit.selected_evidence_ids,
     },

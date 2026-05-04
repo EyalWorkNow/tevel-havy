@@ -288,9 +288,15 @@ const atomHasQueryEntityGrounding = (atom: FcfR3EvidenceAtom, queryPlan: FcfR3Qu
 
 const inferTaskFamily = (value: string): FcfR3TaskFamily => {
   const normalized = normalizeLookupText(value);
-  if (/(price|cost|budget|fund|payment|finance|כסף|תקציב|תשלום|מימון|פיננס)/i.test(normalized)) return "financial";
+  // "financial" task family only for explicit quantitative financial/SEC analysis requests.
+  // Hebrew investigative money terms (כסף, תשלום, מימון) in OSINT/intel context stay as "general".
+  const isExplicitFinance = /(revenue|ebitda|balance sheet|income statement|cash flow|p&l|free cash flow|gross margin|net income|ניתוח פיננסי של מסמכי|דוח כספי|מאזן חשבונאי|רווח גולמי|תזרים מזומנים)\b/i.test(normalized);
+  if (isExplicitFinance) return "financial";
+  // Temporal
   if (/(date|deadline|timeline|before|after|תאריך|לפני|אחרי|ציר זמן|מתי)/i.test(normalized)) return "temporal";
+  // Policy
   if (/(rule|policy|procedure|must|shall|מדיניות|נוהל|חייב)/i.test(normalized)) return "policy";
+  // Risk / contradiction
   if (/(risk|warning|threat|conflict|contradict|סתירה|איום|סיכון|קונפליקט)/i.test(normalized)) return "risk";
   return "general";
 };
@@ -322,7 +328,7 @@ const queryWantsExhaustiveContext = (query: string): boolean =>
   );
 
 const queryAllowsCrossSourceSearch = (query: string): boolean =>
-  /\b(?:all database|entire database|global search|cross[-\s]?case|across cases|compare cases|all reports|other cases|full db|whole corpus)\b|בכל המאגר|כל המאגר|חיפוש גלובלי|בין כל התיקים|השווה בין.*תיקים|עוד תיקים|כל הדוחות/i.test(
+  /\b(?:all database|entire database|global search|cross[-\s]?case|across cases|compare cases|all reports|other cases|full db|whole corpus)\b|בכל המאגר|כל המאגר|חיפוש גלובלי|בין כל התיקים|השווה בין.*תיקים|עוד תיקים|כל הדוחות|בין הקבצים|שלושת הקבצים|כל הקבצים|הצלבה|השוואה(?:\s*בין)|דפוס\s*חוזר|תמונה\s*מערכתית|מחקר\s*רב.מסמכי|סינתזה\s*חוצת/i.test(
     query,
   );
 

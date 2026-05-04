@@ -42,6 +42,9 @@ const readInput = async (): Promise<{ documents: InputDocument[]; question: stri
   return { documents, question };
 };
 
+// NOTE: This benchmark is for SEC/finance documents only.
+// For Hebrew intelligence/investigative documents, use benchmark-live-research-intel-he.ts instead.
+// Do NOT use this makePackage for non-SEC documents — it forces FINANCE profile and SEC metadata.
 const makePackage = (doc: InputDocument): IntelligencePackage => ({
   clean_text: doc.raw_text.slice(0, 1200),
   raw_text: doc.raw_text,
@@ -49,12 +52,14 @@ const makePackage = (doc: InputDocument): IntelligencePackage => ({
   document_metadata: {
     document_id: doc.id || doc.title,
     title: doc.title,
-    classification: "SEC",
-    author: "SEC",
-    source_orgs: "SEC",
+    // Only set classification to SEC when the input document is genuinely an SEC filing
+    classification: /SECURITIES AND EXCHANGE COMMISSION|FORM 10-K|FORM 10-Q/i.test(doc.raw_text) ? "SEC" : undefined,
+    author: /SECURITIES AND EXCHANGE COMMISSION/i.test(doc.raw_text) ? "SEC" : undefined,
+    source_orgs: /SECURITIES AND EXCHANGE COMMISSION/i.test(doc.raw_text) ? "SEC" : undefined,
     language: "en",
   },
-  research_profile: "FINANCE",
+  // Only force FINANCE profile for genuine SEC documents
+  research_profile: /SECURITIES AND EXCHANGE COMMISSION|FORM 10-K|FORM 10-Q/i.test(doc.raw_text) ? "FINANCE" : undefined,
   research_profile_detection: undefined,
   entities: [],
   relations: [],

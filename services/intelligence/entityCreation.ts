@@ -121,6 +121,42 @@ export class EntityCreationEngine {
             { regex: /\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b/g, type: "FINANCIAL_ACCOUNT", role: "IBAN or banking account", confidence: 0.9 },
             { regex: /\b[A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b/g, type: "FINANCIAL_ACCOUNT", role: "SWIFT/BIC identifier", confidence: 0.82 },
             { regex: /\b[A-Z]{2,}(?:[-_][A-Z0-9]+)*\b/g, type: "ORGANIZATION", role: "Uppercase coded entity", confidence: 0.62 },
+
+            // ── Hebrew deterministic entity patterns ──────────────────────────────
+
+            // Hebrew money amounts: €/$/ ₪/ש"ח/דולר/אירו/USDT before or after the number
+            { regex: /(?:[€$₪]|ש["״]ח|דולר|אירו|USDT|קריפטו)\s*\d[\d,.]*(?:\s*(?:אלף|מיליון|מיליארד|k|m|bn))?\b|\b\d[\d,.]*\s*(?:[€$₪]|ש["״]ח|דולר|אירו|USDT)\b/g, type: "MONEY_AMOUNT", role: "Hebrew money amount", confidence: 0.92 },
+
+            // Hebrew organizations: name ending with legal suffix or common company-type English suffix
+            { regex: /[א-ת][א-ת\s\-"'׳]{1,30}(?:בע["״]מ|בע"מ)\b/g, type: "COMPANY", role: "Hebrew registered company", confidence: 0.88 },
+            { regex: /[A-Z][A-Za-z\s]{2,35}(?:\b(?:GmbH|FZE|B\.V\.|S\.A\.|LLC|Ltd|Inc|Corp|Holdings|Logistics|Advisory|Maritime|Group|Shipping|Capital|Partners|Trading|Services|Investment|Management)\b)/g, type: "COMPANY", role: "Foreign-registered company with suffix", confidence: 0.86 },
+
+            // Hebrew facilities / locations — use LOCATION type to match existing analysisService convention
+            { regex: /(?:מחסן|נמל|פארק|דירת\s*מסתור|מפעל|מסגד|מעבר\s*גבול|רציף|מתחם|שדה\s*תעופה|אזור\s*תעשייה)\s+[א-ת][א-תA-Za-z0-9"']{1,}(?:\s+[א-ת][א-תA-Za-z0-9"']{0,}){0,2}/g, type: "LOCATION", role: "Hebrew facility or location", confidence: 0.84 },
+
+            // Hebrew operations and codenames (after מבצע / פרויקט / תרחיש / תיק / מכרז / קוד / שם)
+            { regex: /(?:מבצע|פרויקט|תרחיש|תיק|מכרז|קוד(?:שם)?|שם\s*(?:המבצע|הפרויקט))\s+["״]?[א-תA-Za-z\d][א-תA-Za-z\d\s\-"״]{1,28}["״]?/g, type: "OPERATION", role: "Hebrew operation, project or codename", confidence: 0.87 },
+
+            // Hebrew communication channels
+            { regex: /(?:טלגרם|וואטסאפ|VOIP|VPN|Wi-Fi|ערוץ\s*מוצפן|שרת\s*פרוקסי|כתובת\s*IP|ארנק\s*(?:קריפטו|USDT|ביטקויין))\b[^\n.،,]{0,40}/g, type: "COMMUNICATION_CHANNEL", role: "Hebrew communication channel or infrastructure", confidence: 0.83 },
+
+            // Hebrew person names after context markers
+            { regex: /(?:מאת|אל|על\s*החתום|בשם|מזוהה\s*כ|אחיו\s*של|דודו\s*של|סגנו\s*של|מפקד|האחראי|הגורם)\s*[:：]?\s*([א-ת][א-ת"׳\-]{1,10}(?:\s+[א-ת][א-ת"׳\-]{1,15}){1,2})/g, type: "PERSON", role: "Hebrew person identified by context marker", confidence: 0.82 },
+
+            // Hebrew document types
+            { regex: /(?:דו["״]ח|מסמך|טיוטה|פרוטוקול|הסכם|חוזה|מכרז|צו|הוראה|תכתובת|דו"ח\s*(?:מודיעין|תצפית|בקרה|פענוח|שטח))\s+[א-תA-Za-z0-9"״\-\s]{2,40}/g, type: "DOCUMENT", role: "Hebrew document reference", confidence: 0.79 },
+
+            // Hebrew vehicle / license plate
+            { regex: /לוחית\s*רישוי\s*[\d\-]{5,10}|רכב\s+(?:שירות|מסחרי|ממשלתי)\s*(?:\d[\d\-]{0,8})?/g, type: "VEHICLE", role: "Hebrew vehicle or plate number", confidence: 0.85 },
+
+            // Hebrew Israeli agency names (deterministic)
+            { regex: /\b(?:שב["״]כ|שב"כ|שב["״]ס|שב"ס|אמ["״]ן|אמ"ן|המוסד|משטרת\s*ישראל|מג["״]ב|מג"ב|ימ["״]מ|ימ"מ|יח[׳']?\s*\d+|יחידה\s+\d+|אגף\s+ביקורת|חמ["״]ל|חמ"ל|קמ["״]ן|קמ"ן)\b/g, type: "AGENCY", role: "Hebrew Israeli security / intelligence agency", confidence: 0.95 },
+
+            // Hebrew committee / institutional body
+            { regex: /(?:ועדת\s+[א-ת\s]{2,20}|רשות\s+[א-ת\s]{2,20}|מטה\s+[א-ת\s]{2,15}|אגף\s+[א-ת\s]{2,15})/g, type: "ORGANIZATION", role: "Hebrew committee or institutional body", confidence: 0.81 },
+
+            // USDT / crypto wallet address patterns
+            { regex: /\b[TU][A-Za-z0-9]{25,35}\b/g, type: "FINANCIAL_ACCOUNT", role: "Crypto wallet address (USDT/TRC20)", confidence: 0.88 },
         ];
 
         patterns.forEach(({ regex, type, role, confidence }) => {
@@ -583,9 +619,9 @@ ${JSON.stringify(
     }
 
     private static isLikelyOrganizationName(candidate: string): boolean {
-        return /\b(?:Agency|Authority|Bank|Brokers|Committee|Company|Council|Customs|Department|Directorate|Finance|Foundation|Group|Holdings|Institute|Logistics|Ltd|Ministry|Office|Port|Procurement|Security|Services|Shipping|Telecom|University|Warehousing)\b/i.test(
+        return /\b(?:Agency|Authority|Bank|Brokers|Committee|Company|Council|Customs|Department|Directorate|Finance|Foundation|Group|Holdings|Institute|Logistics|Ltd|Ministry|Office|Port|Procurement|Security|Services|Shipping|Telecom|University|Warehousing|Advisory|Maritime|Capital|Partners|Trading|Investment|Management|GmbH|FZE)\b/i.test(
             candidate
-        );
+        ) || /(?:בע["״]מ|בע"מ|ועדת|רשות|משרד|מטה|יחידת|חברת|קבוצת)/u.test(candidate);
     }
 
     private static inferTitleCaseType(candidate: string): string {
