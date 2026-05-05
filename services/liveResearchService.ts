@@ -177,6 +177,7 @@ export interface LiveResearchAnswer {
 export interface LiveResearchQuestionOptions {
   reasoningEngineId?: ReasoningEngineId;
   geminiApiKey?: string;
+  precomputedCorpus?: LiveResearchCorpus;
 }
 
 export interface LiveResearchTokenBenchmark {
@@ -1565,9 +1566,10 @@ const buildStudyBlock = (source: LiveResearchSource, study: StudyItem): string =
 };
 
 const buildCorpusText = (sources: LiveResearchSource[], studies: StudyItem[]): string => {
+  const studyIndex = new Map(studies.map((s) => [s.id, s]));
   const blocks = sources
     .map((source) => {
-      const study = studies.find((candidate) => candidate.id === source.id);
+      const study = studyIndex.get(source.id);
       return study ? buildStudyBlock(source, study) : "";
     })
     .filter(Boolean);
@@ -1636,7 +1638,7 @@ const answerCitesSelectedEvidence = (answerText: string, evidenceIds: string[]):
 };
 
 const LIVE_RESEARCH_DB_ONLY_SYSTEM_INSTRUCTION =
-  "You are TEVEL's database research copilot. Answer strictly and only from the provided database records, scoped evidence, and retrieved snippets. Treat the selected DB scope as the complete world for this answer. If the answer is not present in the scoped database material, say that it was not found in the selected DB scope. Do not use outside knowledge, prior model knowledge, or generic background information. Cite evidence IDs in square brackets when available. Be concise and direct.";
+  "You are TEVEL's database research copilot. The user's question appears at the top of the prompt — read it carefully and answer it directly. Use only the evidence provided in the retrieval context to answer that specific question. Do not summarize the documents generally; answer the question. If the answer is not in the provided evidence, say so clearly. Do not use outside knowledge. Cite evidence IDs in square brackets. Answer in the same language as the question. Be concise and direct.";
 
 type OutputExclusion = "FCF" | "timeline" | "entity" | "confidence" | "communicated_with";
 
@@ -1752,9 +1754,10 @@ const buildSourceGroundedReadPath = (
   const financeIntent = hasFinanceOrSecIntent(question);
   const evidenceItems: SourceGroundedEvidenceItem[] = [];
   const sourceSummaries: SourceGroundedSourceSummary[] = [];
+  const studyIndex = new Map(studies.map((s) => [s.id, s]));
 
   corpus.sources.forEach((source) => {
-    const study = studies.find((candidate) => candidate.id === source.id);
+    const study = studyIndex.get(source.id);
     const rawText = study?.intelligence.raw_text || study?.intelligence.clean_text || "";
     const documentKind = detectSecDocumentKind(rawText, source.title);
     const detectedDomain = detectDocumentDomain(rawText, { title: source.title });
@@ -1980,11 +1983,13 @@ const buildSourceGroundedFallbackAnswer = (
   ].join('\n\n');
 };
 
-const rawCharsForSources = (sources: LiveResearchSource[], studies: StudyItem[]): number =>
-  sources.reduce((sum, source) => {
-    const study = studies.find((candidate) => candidate.id === source.id);
+const rawCharsForSources = (sources: LiveResearchSource[], studies: StudyItem[]): number => {
+  const studyIndex = new Map(studies.map((s) => [s.id, s]));
+  return sources.reduce((sum, source) => {
+    const study = studyIndex.get(source.id);
     return sum + (study?.intelligence.raw_text?.length || study?.intelligence.clean_text?.length || 0);
   }, 0);
+};
 
 const makeTokenBenchmark = (
   route: LiveResearchTokenBenchmark["route"],
@@ -2427,7 +2432,7 @@ export const buildLiveResearchQuestionBenchmark = (
   options: LiveResearchQuestionOptions = {},
 ): LiveResearchTokenBenchmark => {
   const reasoningEngine = getReasoningEngineDescriptor(options.reasoningEngineId);
-  const corpus = buildLiveResearchCorpus(question, studies, selectedStudyIds);
+  const corpus = options.precomputedCorpus ?? buildLiveResearchCorpus(question, studies, selectedStudyIds);
 
   if (corpus.scope.scopedStudies === 0) {
     return makeTokenBenchmark("empty", corpus, studies, {
@@ -2470,8 +2475,7 @@ export const buildLiveResearchQuestionBenchmark = (
     maxContextChars: reasoningEngine.surface === "cloud" ? 5200 : 3600,
     maxEvidenceItems: reasoningEngine.surface === "cloud" ? 12 : 8,
     maxSnippetChars: reasoningEngine.surface === "cloud" ? 220 : 180,
-    allowedSourceDocIds: corpus.sources.map((source) => source.id),
-    allowCrossSource: isGlobalDbSearchQuery(question) || Boolean(selectedStudyIds && selectedStudyIds.length > 1),
+    allowCrossSource: isGlobalDbSearchQuery(question) || CROSS_DOCUMENT_QUERY_RE.test(question) || Boolean(selectedStudyIds && selectedStudyIds.length > 1),
   });
 
   return makeTokenBenchmark("fcf-r3", corpus, studies, {
@@ -2623,18 +2627,21 @@ export const askLiveResearchQuestion = async (
     return askSourceGroundedLiveResearchQuestion(question, studies, history, corpus, reasoningEngine, options);
   }
 
+  // corpus.package is already scoped to selected studies by buildLiveResearchCorpus.
+  // Do NOT pass allowedSourceDocIds: atoms in the merged package use source_doc_id values
+  // of "live-research-scope" (structured atoms) or "study_${hash}:original" (retrieval hits),
+  // neither of which matches raw study IDs — the filter would prune all atoms.
   const fcfRun = buildFcfR3ReadPath(question, corpus.package, {
     maxContextChars: reasoningEngine.surface === "cloud" ? 5200 : 3600,
     maxEvidenceItems: reasoningEngine.surface === "cloud" ? 12 : 8,
     maxSnippetChars: reasoningEngine.surface === "cloud" ? 220 : 180,
-    allowedSourceDocIds: corpus.sources.map((source) => source.id),
-    allowCrossSource: isGlobalDbSearchQuery(question) || Boolean(selectedStudyIds && selectedStudyIds.length > 1),
+    allowCrossSource: isGlobalDbSearchQuery(question) || CROSS_DOCUMENT_QUERY_RE.test(question) || Boolean(selectedStudyIds && selectedStudyIds.length > 1),
   });
+  // Accept any entity-grounded non-noise evidence — include relations with supporting text.
   const scopedEntityGroundingOk = fcfRun.selected.some(
     (entry) =>
       entry.entity_grounded &&
-      !["weak_noisy_evidence", "hypothesis_eei"].includes(entry.evidence_type) &&
-      entry.atom.kind !== "relation",
+      !["weak_noisy_evidence", "hypothesis_eei"].includes(entry.evidence_type),
   );
   if (!scopedEntityGroundingOk) {
     return {
@@ -2706,11 +2713,15 @@ export const askLiveResearchQuestion = async (
     reasoningEngineSurface: engineTrace.engineSurface,
     failureKind: engineTrace.failureKind || "offline",
   });
+  // Only replace model answer with deterministic fallback when BOTH: the model didn't
+  // cite any selected evidence AND the citation verifier confirms < 40% support.
+  // Using OR here discarded perfectly good Ollama answers just because the model wrote
+  // natural language without bracketed IDs — that's worse than the model's answer.
   const modelAnswerIsWeaklyGrounded =
     !reasoningFailure &&
     fcfRun.selected.length > 0 &&
-    (!answerCitesSelectedEvidence(answerWithoutCitationNote, fcfRun.audit.selected_evidence_ids) ||
-      (citationRun && citationRun.supported_claim_rate < 0.8));
+    !answerCitesSelectedEvidence(answerWithoutCitationNote, fcfRun.audit.selected_evidence_ids) &&
+    (citationRun ? citationRun.supported_claim_rate < 0.4 : false);
 
   const verifiedSynthesis = modelAnswerIsWeaklyGrounded
     ? buildFcfR3DeterministicAnswer(question, fcfRun, {

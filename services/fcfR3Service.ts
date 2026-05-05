@@ -1514,22 +1514,20 @@ const materializeContext = (
       )?.status || "weak_noisy";
     const evidenceLines = selected.map((entry) => {
       const id = entry.atom.evidence_id || entry.atom.citation_id;
-      return `[${id}] ${entry.context_type};${shortStatus(statusForEntry(entry) as FcfR3ClusterStatus)}/${shortEvidenceType(entry.evidence_type)};p${entry.cluster_priority}: ${truncate(entry.atom.text.replace(/\s+/g, " "), compactSnippetChars)}`;
+      const label = shortEvidenceType(entry.evidence_type);
+      return `[${id}] (${label}) ${truncate(entry.atom.text.replace(/\s+/g, " "), compactSnippetChars)}`;
     });
-    const clusterIndex = evidenceClusters
-      .map((cluster, index) => {
-        return `C${index + 1}:${shortStatus(cluster.status)}/${cluster.confidence_label || "low"}/${shortEvidenceType(cluster.evidence_type)}`;
-      })
-      .join("; ");
-    const foundTypes = uniqueStrings(selected.map((entry) => entry.context_type)).slice(0, 12);
+    const clusterSummary = evidenceClusters.length
+      ? evidenceClusters.map((c, i) => `${i + 1}. ${c.label} (${shortStatus(c.status as FcfR3ClusterStatus)}/${c.confidence_label || "low"})`).join("; ")
+      : "none";
     const compactContext = [
       "FCF-R3 READ PATH",
-      `route=${queryPlan.mode}; status=${status}; selected=${selected.length}/${queryPlan.max_evidence_items}`,
-      foundTypes.length ? `coverage=${foundTypes.join(",")}` : "",
-      clusterIndex ? `CLUSTERS ${clusterIndex}` : "CLUSTERS none",
-      "EVIDENCE",
-      evidenceLines.length ? evidenceLines.join("\n") : "No evidence selected; abstain.",
-      "RULES: Synthesize first; cite ids; direct>indirect>EEI; indirect=possible; EEI=validation gap.",
+      `status=${status}; selected=${selected.length}`,
+      `CLUSTERS: ${clusterSummary}`,
+      "EVIDENCE:",
+      evidenceLines.length ? evidenceLines.join("\n\n") : "No evidence found — state that the information is not available.",
+      "",
+      "Answer the user's question using only the evidence above. Cite IDs in brackets. If only indirect/eei evidence exists, state it as a possible indicator.",
     ]
       .filter(Boolean)
       .join("\n");
@@ -1756,33 +1754,32 @@ export const buildFcfR3DeterministicAnswer = (
   },
 ): string => {
   const isHebrew = /[\u0590-\u05FF]/u.test(query);
-  const selectedLines = run.selected.slice(0, 5).map((entry) => {
+  // Prefer retrieval hits and statements over entity/relation metadata \u2014 they contain
+  // actual document text and are more useful to the user than internal graph labels.
+  const usefulAtoms = run.selected.filter((e) => ["retrieval_hit", "statement", "insight", "timeline"].includes(e.atom.kind));
+  const atomsForDisplay = (usefulAtoms.length > 0 ? usefulAtoms : run.selected).slice(0, 6);
+  const selectedLines = atomsForDisplay.map((entry) => {
     const id = entry.atom.evidence_id || entry.atom.citation_id;
-    return `- ${truncate(entry.atom.text, 360)} [${id}]`;
+    return `- ${truncate(entry.atom.text, 400)} [${id}]`;
   });
   const reasoningSurface: FcfR3ReasoningEngineSurface = options?.reasoningEngineSurface || "local";
   const failureKind: FcfR3ReasoningFailureKind = options?.failureKind || "timeout";
   const includeFallbackNotice = options?.includeFallbackNotice ?? true;
+  const engineLabel = reasoningSurface === "cloud"
+    ? (isHebrew ? "מנוע הענן" : "cloud reasoning engine")
+    : (isHebrew ? "המודל המקומי" : "local model");
   const fallbackNotice = isHebrew
-    ? reasoningSurface === "cloud"
-      ? failureKind === "offline"
-        ? "מנוע ההסקה בענן לא היה זמין, לכן נמסרה תשובת FCF-R3 דטרמיניסטית מתוך הראיות שנבחרו."
-        : "מנוע ההסקה בענן לא החזיר תשובה בזמן, לכן נמסרה תשובת FCF-R3 דטרמיניסטית מתוך הראיות שנבחרו."
-      : failureKind === "offline"
-        ? "המודל המקומי לא היה זמין, לכן נמסרה תשובת FCF-R3 דטרמיניסטית מתוך הראיות שנבחרו."
-        : "המודל המקומי לא החזיר תשובה בזמן, לכן נמסרה תשובת FCF-R3 דטרמיניסטית מתוך הראיות שנבחרו."
-    : reasoningSurface === "cloud"
-      ? failureKind === "offline"
-        ? "The cloud reasoning engine was unavailable, so this deterministic FCF-R3 answer was assembled from selected evidence."
-        : "The cloud reasoning engine did not answer in time, so this deterministic FCF-R3 answer was assembled from selected evidence."
-      : failureKind === "offline"
-        ? "The local model was unavailable, so this deterministic FCF-R3 answer was assembled from selected evidence."
-        : "The local model did not answer in time, so this deterministic FCF-R3 answer was assembled from selected evidence.";
+    ? failureKind === "offline"
+      ? `${engineLabel} לא היה זמין. להלן המידע הרלוונטי שנמצא במסמכים:`
+      : `${engineLabel} לא החזיר תשובה בזמן. להלן המידע הרלוונטי שנמצא במסמכים:`
+    : failureKind === "offline"
+      ? `The ${engineLabel} was unavailable. Relevant information found in the documents:`
+      : `The ${engineLabel} did not respond in time. Relevant information found in the documents:`;
 
   if (!selectedLines.length) {
     return isHebrew
-      ? `סטטוס FCF-R3: ${run.audit.answer_status}\n\nלא נמצאו ראיות מספיקות בקורפוס הנבחר כדי לענות בבטחה.`
-      : `FCF-R3 status: ${run.audit.answer_status}\n\nNo sufficient evidence survived selection for a safe answer.`;
+      ? "לא נמצאו ראיות מספיקות במסמכים הנבחרים כדי לענות על השאלה."
+      : "No sufficient evidence was found in the selected documents to answer the question.";
   }
 
   const warningLines = run.audit.warnings.slice(0, 3).map((warning) => `- ${warning}`);

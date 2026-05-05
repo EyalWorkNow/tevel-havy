@@ -1415,10 +1415,10 @@ ${JSON.stringify(schema, null, 2)}`;
                 });
             } catch (error) {
                 console.error("Gemini request failed:", error);
-                if (forcedGemini || explicitGeminiModel) {
-                    throw error;
-                }
-                console.warn("Gemini primary reasoning failed; falling back to local Ollama reasoning.");
+                console.warn("Gemini reasoning failed; falling back to local Ollama reasoning.");
+                // Fall through to Ollama — do not re-throw. If the user explicitly selected
+                // gemini-cloud but it's unavailable (no key, network error), Ollama is a
+                // better answer than a raw deterministic atom dump.
             }
         }
 
@@ -1445,8 +1445,8 @@ ${JSON.stringify(schema, null, 2)}`;
                             format: params.format,
                             options: {
                                 temperature: 0.15,
-                                num_ctx: 2048,
-                                num_predict: 800,
+                                num_ctx: 6144,
+                                num_predict: 1200,
                                 repeat_penalty: 1.15,
                                 think: false,
                             },
@@ -2841,7 +2841,10 @@ export const askContextualQuestion = async (
                 : (options?.fastMode ? FAST_QA_TIMEOUT_MS : REQUEST_TIMEOUT_MS)
         );
 
-        const prompt = `CONTEXT PACKAGE:
+        const prompt = `QUESTION TO ANSWER:
+${question}
+
+CONTEXT PACKAGE:
 ${knowledgeSnapshot}
 
 RETRIEVAL CONTEXT:
@@ -2850,8 +2853,7 @@ ${retrievalContext}
 RECENT HISTORY:
 ${historyText || "No prior exchanges."}
 
-QUESTION:
-${question}`;
+Answer the question above. Use only the evidence provided in the retrieval context. Do not invent facts not present there.`;
 
         const startTime = Date.now();
         console.info("[askContextualQuestion] Starting generation...");

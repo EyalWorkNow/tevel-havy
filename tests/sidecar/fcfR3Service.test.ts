@@ -380,7 +380,7 @@ test("FCF-R3 malformed or ungrounded relation triples cannot create confident en
 
   assert.equal(run.audit.answer_status, "no-evidence");
   assert.equal(run.selected.length, 0);
-  assert.match(answer, /No sufficient evidence survived selection|לא נמצאו ראיות מספיקות/);
+  assert.match(answer, /No sufficient evidence|לא נמצאו ראיות מספיקות/);
   assert.doesNotMatch(answer, /Core meaning:/);
   assert.doesNotMatch(answer, /Relationship:/);
 });
