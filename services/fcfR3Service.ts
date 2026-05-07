@@ -712,27 +712,6 @@ const collectStructuredAtoms = (pkg: IntelligencePackage): FcfR3EvidenceAtom[] =
     }),
   );
 
-  const insightAtoms = (pkg.insights || []).map((insight: Insight, index) =>
-    makeAtom({
-      atom_id: `fcf_insight_${index}_${stableHash(insight.text)}`,
-      kind: "insight",
-      item_type: "claim",
-      source_doc_id: pkg.document_metadata?.document_id || "package",
-      title: `Insight: ${insight.type}`,
-      text: insight.text,
-      entity_anchors: inferEntityAnchorsFromText(insight.text, pkg.entities || []),
-      time_anchors: [],
-      version_state: "unknown",
-      validity_score: 0.58,
-      source_trust: pkg.reliability ?? 0.64,
-      confidence: insight.importance,
-      task_family: inferTaskFamily(insight.text),
-      retrieval_score: 0.2,
-      contradiction_ids: [],
-      version_edge_ids: [],
-      reference_only: false,
-    }),
-  );
 
   const timelineAtoms = (pkg.timeline || []).map((event: TimelineEvent, index) =>
     makeAtom({
@@ -782,11 +761,11 @@ const collectStructuredAtoms = (pkg: IntelligencePackage): FcfR3EvidenceAtom[] =
       });
     });
 
-  return [...entityAtoms, ...statementAtoms, ...insightAtoms, ...timelineAtoms, ...relationAtoms];
+  return [...entityAtoms, ...statementAtoms, ...timelineAtoms, ...relationAtoms];
 };
 
 const collectFallbackAtom = (pkg: IntelligencePackage): FcfR3EvidenceAtom[] => {
-  if (pkg.retrieval_artifacts || pkg.version_validity || pkg.entities.length || pkg.statements?.length || pkg.insights.length) {
+  if (pkg.retrieval_artifacts || pkg.version_validity || pkg.entities.length || pkg.statements?.length) {
     return [];
   }
   return [
@@ -1352,7 +1331,7 @@ const deriveAnswerStatus = (selected: FcfR3SelectedEvidence[], queryPlan: FcfR3Q
 };
 
 const isTraceableEvidence = (entry: FcfR3SelectedEvidence): boolean =>
-  Boolean(entry.atom.evidence_id || entry.atom.source_text_unit_id || ["retrieval_hit", "version_atom", "statement", "insight", "timeline"].includes(entry.atom.kind));
+  Boolean(entry.atom.evidence_id || entry.atom.source_text_unit_id || ["retrieval_hit", "version_atom", "statement", "timeline"].includes(entry.atom.kind));
 
 const validateSourceConsistency = (selected: FcfR3SelectedEvidence[], queryPlan: FcfR3QueryPlan) => {
   const sourceDocIds = uniqueStrings(selected.map((entry) => entry.atom.source_doc_id).filter(Boolean));
@@ -1824,7 +1803,7 @@ export const buildFcfR3DeterministicAnswer = (
   const isHebrew = /[\u0590-\u05FF]/u.test(query);
   // Prefer retrieval hits and statements over entity/relation metadata \u2014 they contain
   // actual document text and are more useful to the user than internal graph labels.
-  const usefulAtoms = run.selected.filter((e) => ["retrieval_hit", "statement", "insight", "timeline"].includes(e.atom.kind));
+  const usefulAtoms = run.selected.filter((e) => ["retrieval_hit", "statement", "timeline"].includes(e.atom.kind));
   const atomsForDisplay = (usefulAtoms.length > 0 ? usefulAtoms : run.selected).slice(0, 6);
   const selectedLines = atomsForDisplay.map((entry) => {
     const id = entry.atom.evidence_id || entry.atom.citation_id;

@@ -39,6 +39,7 @@ import { EntityIntelligenceCaseResult, EntityProfileRecord } from "./sidecar/ent
 import { runVersionValidityEngine } from "./sidecar/versionValidity/service";
 import { VersionValidityReport } from "./sidecar/versionValidity/contracts";
 import { verifyRetrievalArtifacts } from "./sidecar/citationVerification/service";
+import { buildFcfR3ReadPath } from "./fcfR3Service";
 
 type CandidateRelation = {
   source: string;
@@ -1649,7 +1650,7 @@ const deriveRelations = (
         target: right.entity.name,
         type,
         confidence: type === "FUNDED" ? 0.86 : type === "COMMUNICATED_WITH" ? 0.82 : 0.74,
-        statement_id: `rel_${stableHash(`${sentenceIndex}:${left.entity.name}:${type}:${right.entity.name}`)}`,
+        evidence_status: "inferred" as const,
       });
     });
   });
@@ -1945,67 +1946,15 @@ const buildTimeline = (sourceText: string, entities: Entity[], relations: Relati
     dates.forEach((date) => addEvent(date, eventText));
   });
 
-  if (events.size < 3) {
-    relations
-      .filter((relation) => relation.type !== "ASSOCIATED_WITH")
-      .slice(0, 6)
-      .forEach((relation, index) => {
-        addEvent(
-          `9999-12-${String(index + 1).padStart(2, "0")}`,
-          hebrew
-            ? `${relation.source} ${relation.type.toLowerCase()} ${relation.target}.`
-            : `${relation.source} ${relation.type.toLowerCase()} ${relation.target}.`,
-        );
-      });
-  }
-
-  if (events.size === 0) {
-    pickLeadEntities(entities, 4)
-      .forEach((entity, index) => {
-        addEvent(
-          `9999-11-${String(index + 1).padStart(2, "0")}`,
-          hebrew
-            ? `${entity.name} הופיע כעוגן מחקרי במסמך ונדרש להמשך בדיקה.`
-            : `${entity.name} surfaced as a document anchor requiring follow-on review.`,
-        );
-      });
-  }
-
   return Array.from(events.values()).sort((a, b) => a.date.localeCompare(b.date)).slice(0, 25);
 };
 
-const buildStatements = (relations: Relation[], timeline: TimelineEvent[], entities: Entity[], sourceText: string, baseStatements: Statement[] = []): Statement[] => {
+const buildStatements = (_relations: Relation[], _timeline: TimelineEvent[], entities: Entity[], sourceText: string, baseStatements: Statement[] = []): Statement[] => {
   const hebrew = isHebrewDominant(sourceText);
-  const statements = [...baseStatements];
-  const seen = new Set(baseStatements.map((statement) => statement.statement_text));
-
-  relations.slice(0, 12).forEach((relation, index) => {
-    const text = `${relation.source} ${relation.type.replace(/_/g, " ").toLowerCase()} ${relation.target}.`;
-    if (seen.has(text)) return;
-    seen.add(text);
-    statements.push({
-      statement_id: `stmt_rel_${index}_${stableHash(text)}`,
-      knowledge: "FACT",
-      category:
-        relation.type === "FUNDED"
-          ? "FINANCIAL"
-          : relation.type === "COMMUNICATED_WITH"
-            ? "TACTICAL"
-            : relation.type === "MOVED_TO"
-              ? "LOGISTICAL"
-              : "OTHER",
-      statement_text: text,
-      confidence: relation.confidence,
-      assumption_flag: false,
-      intelligence_gap: false,
-      impact: relation.confidence >= 0.85 ? "HIGH" : "MEDIUM",
-      operational_relevance: relation.confidence >= 0.82 ? "HIGH" : "MEDIUM",
-      related_entities: [relation.source, relation.target],
-    });
-  });
-
-  if (!statements.length && entities.length) {
-    statements.push({
+  if (baseStatements.length) return baseStatements.slice(0, 20);
+  if (!entities.length) return [];
+  return [
+    {
       statement_id: `stmt_summary_${stableHash(sourceText.slice(0, 80))}`,
       knowledge: "ASSESSMENT",
       category: "OTHER",
@@ -2018,28 +1967,8 @@ const buildStatements = (relations: Relation[], timeline: TimelineEvent[], entit
       impact: "MEDIUM",
       operational_relevance: "MEDIUM",
       related_entities: entities.slice(0, 6).map((entity) => entity.name),
-    });
-  }
-
-  timeline.slice(0, 3).forEach((event, index) => {
-    const text = `${event.date}: ${event.event}`;
-    if (seen.has(text)) return;
-    seen.add(text);
-    statements.push({
-      statement_id: `stmt_timeline_${index}_${stableHash(text)}`,
-      knowledge: "FACT",
-      category: "TACTICAL",
-      statement_text: text,
-      confidence: 0.76,
-      assumption_flag: false,
-      intelligence_gap: false,
-      impact: "MEDIUM",
-      operational_relevance: "HIGH",
-      related_entities: entities.filter((entity) => event.event.toLowerCase().includes(entity.name.toLowerCase())).slice(0, 4).map((entity) => entity.name),
-    });
-  });
-
-  return statements.slice(0, 20);
+    },
+  ];
 };
 
 const buildInsights = (
@@ -2123,24 +2052,6 @@ const buildInsights = (
           text: hebrew
             ? "זוהו רכיבי מחקר מרכזיים: דאטהסט/מודל/מדד, ולא רק מחברים ומוסדות."
             : "Core research objects were extracted: datasets, models, and metrics, not only authors and institutions.",
-        }
-      : null,
-    profileId === "INTEL" && relations.find((relation) => relation.type === "FUNDED")
-      ? {
-          type: "pattern",
-          importance: 0.9,
-          text: hebrew
-            ? `זוהה קשר מימוני: ${relations.find((relation) => relation.type === "FUNDED")!.source} מימן את ${relations.find((relation) => relation.type === "FUNDED")!.target}.`
-            : `Financial linkage detected: ${relations.find((relation) => relation.type === "FUNDED")!.source} funded ${relations.find((relation) => relation.type === "FUNDED")!.target}.`,
-        }
-      : null,
-    profileId === "INTEL" && relations.find((relation) => relation.type === "COMMUNICATED_WITH")
-      ? {
-          type: "key_event",
-          importance: 0.84,
-          text: hebrew
-            ? `זוהתה תקשורת בין ${relations.find((relation) => relation.type === "COMMUNICATED_WITH")!.source} לבין ${relations.find((relation) => relation.type === "COMMUNICATED_WITH")!.target}.`
-            : `Communication activity surfaced between ${relations.find((relation) => relation.type === "COMMUNICATED_WITH")!.source} and ${relations.find((relation) => relation.type === "COMMUNICATED_WITH")!.target}.`,
         }
       : null,
     timeline[0]
@@ -2836,6 +2747,27 @@ export const analyzeDocument = async (
       enriched.entity_intelligence,
     );
 
+    const fcfIngestionMeta = (() => {
+      try {
+        const primaryEntity = (enriched.entities || []).find((e) =>
+          ["PERSON", "ORGANIZATION", "ORG"].includes(e.type),
+        );
+        const sweepQuery = primaryEntity
+          ? `What is the full intelligence context, role, and relationships for ${primaryEntity.name}?`
+          : "What are the key entities, events, and relationships in this intelligence report?";
+        const sweep = buildFcfR3ReadPath(sweepQuery, enriched, { maxEvidenceItems: 8, maxContextChars: 3000 });
+        return {
+          answer_status: sweep.audit.answer_status,
+          candidate_count: sweep.audit.candidate_count,
+          selected_count: sweep.audit.selected_count,
+          warnings: sweep.audit.warnings.slice(0, 3),
+          top_statements: sweep.selected.slice(0, 3).map((e) => e.atom.text.slice(0, 200)),
+        };
+      } catch {
+        return undefined;
+      }
+    })();
+
     return {
       ...enriched,
       context_cards: enrichedContextCards,
@@ -2844,6 +2776,7 @@ export const analyzeDocument = async (
       person_dossiers: personDossiers,
       person_pipeline: personPipeline,
       entity_intelligence: entityIntelligence || undefined,
+      fcf_ingestion_meta: fcfIngestionMeta,
     };
   } catch (error) {
     console.error("analyzeDocument failed; returning deterministic emergency fallback package", error);

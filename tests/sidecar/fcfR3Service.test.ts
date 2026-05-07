@@ -190,7 +190,20 @@ test("FCF-R3 read path prefers current evidence over stale evidence for current 
 test("FCF-R3 deterministic answer cites selected evidence when the local model is unavailable", () => {
   const pkg = makePackage({
     entities: [{ id: "e1", name: "ג'מאל זביידי", type: "PERSON", confidence: 0.91, aliases: ["זביידי"] }],
-    insights: [{ type: "summary", importance: 1, text: "ג'מאל זביידי מופיע כרכז פיננסי בתיק המטרה." }],
+    statements: [
+      {
+        statement_id: "stmt-test3-1",
+        knowledge: "FACT" as const,
+        category: "TACTICAL" as const,
+        statement_text: "ג'מאל זביידי מופיע כרכז פיננסי בתיק המטרה.",
+        confidence: 1.0,
+        assumption_flag: false,
+        intelligence_gap: false,
+        impact: "HIGH" as const,
+        operational_relevance: "HIGH" as const,
+        related_entities: ["ג'מאל זביידי"],
+      },
+    ],
   });
 
   const run = buildFcfR3ReadPath("מי הוא זביידי", pkg, { maxContextChars: 2200, maxEvidenceItems: 4 });
@@ -198,13 +211,26 @@ test("FCF-R3 deterministic answer cites selected evidence when the local model i
 
   assert.match(answer, /סטטוס FCF-R3/);
   assert.match(answer, /ג.?מאל זביידי/);
-  assert.match(answer, /\[fcf_/);
+  assert.match(answer, /\[stmt-test3-1\]/);
 });
 
 test("FCF-R3 deterministic answer can describe a cloud-engine fallback", () => {
   const pkg = makePackage({
     entities: [{ id: "e1", name: "Policy Alpha", type: "OBJECT", confidence: 0.86 }],
-    insights: [{ type: "summary", importance: 1, text: "Policy Alpha remains under review." }],
+    statements: [
+      {
+        statement_id: "stmt-test4-1",
+        knowledge: "ASSESSMENT" as const,
+        category: "OTHER" as const,
+        statement_text: "Policy Alpha remains under review.",
+        confidence: 0.86,
+        assumption_flag: false,
+        intelligence_gap: false,
+        impact: "MEDIUM" as const,
+        operational_relevance: "MEDIUM" as const,
+        related_entities: ["Policy Alpha"],
+      },
+    ],
   });
 
   const run = buildFcfR3ReadPath("What is the current state of Policy Alpha?", pkg, {
