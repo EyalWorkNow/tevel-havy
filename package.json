@@ -20,7 +20,7 @@
     "bench:fcf-r3-qa": "tsx scripts/benchmark-fcf-r3-qa.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "check": "npm run typecheck && npm run lint && npm run test:sidecar"
+    "check": "npm run typecheck && npm run lint && npm run test:sidecar && npm run bench:fcf-r3-qa && npm run build"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.89.0",
