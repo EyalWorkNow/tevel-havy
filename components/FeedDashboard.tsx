@@ -50,9 +50,9 @@ const calculateSynapseScore = (
   let connections = 0;
   const linkedEntities: string[] = [];
   const otherStudies = allStudies.filter((s) => s.id !== study.id);
-  study.intelligence.entities.forEach((entity) => {
+  (study.intelligence.entities ?? []).forEach((entity) => {
     const isMatch = otherStudies.some((other) =>
-      other.intelligence.entities.some((otherEntity) =>
+      (other.intelligence.entities ?? []).some((otherEntity) =>
         isEntityMatch(entity.name, otherEntity.name),
       ),
     );
@@ -156,7 +156,7 @@ const FeedDashboard: React.FC<FeedDashboardProps> = ({
     const matchesSearch =
       s.title.toLowerCase().includes(lowerSearch) ||
       s.tags.some((t) => t.toLowerCase().includes(lowerSearch)) ||
-      s.intelligence.entities.some((e) => e.name.toLowerCase().includes(lowerSearch));
+      (s.intelligence.entities ?? []).some((e) => e.name.toLowerCase().includes(lowerSearch));
     const matchesFilter =
       filter === 'All' ||
       filter === s.source ||
@@ -274,7 +274,7 @@ const FeedDashboard: React.FC<FeedDashboardProps> = ({
             const fcf = study.intelligence.fcf_ingestion_meta;
             const fcfCfg = getFcfStatusConfig(fcf?.answer_status);
             const FcfIcon = fcfCfg.icon;
-            const topEntities = study.intelligence.entities.slice(0, 4);
+            const topEntities = (study.intelligence.entities ?? []).slice(0, 4);
             const keyText = getKeyText(study);
             const SrcIcon = srcCfg.icon;
 
@@ -344,9 +344,9 @@ const FeedDashboard: React.FC<FeedDashboardProps> = ({
                           </span>
                         );
                       })}
-                      {study.intelligence.entities.length > 4 && (
+                      {(study.intelligence.entities?.length ?? 0) > 4 && (
                         <span className="text-[10px] font-mono text-slate-600 px-1 flex items-center">
-                          +{study.intelligence.entities.length - 4}
+                          +{(study.intelligence.entities?.length ?? 0) - 4}
                         </span>
                       )}
                     </div>

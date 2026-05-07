@@ -132,14 +132,31 @@ const decodeTextLikeFile = async (file: File): Promise<string | null> => {
   return bestText?.trim() || null;
 };
 
+const HEAVY_EXTENSIONS = new Set(['pdf', 'docx', 'pptx', 'xlsx', 'doc', 'xls', 'ppt']);
+const isHeavyFile = (file: File): boolean => {
+  const ext = getFileExtension(file.name);
+  return (
+    file.type === 'application/pdf' ||
+    file.type.includes('wordprocessingml') ||
+    file.type.includes('presentationml') ||
+    file.type.includes('spreadsheetml') ||
+    HEAVY_EXTENSIONS.has(ext)
+  );
+};
+
 const readFileContent = async (file: File): Promise<{ text: string | null; parserName?: string; parserView?: string }> => {
-  const sidecarParsed = await parseUploadedFileWithSidecar(file, { title: file.name });
-  if (sidecarParsed?.raw_content?.trim()) {
-    return {
-      text: sidecarParsed.raw_content.trim(),
-      parserName: sidecarParsed.source_parser?.parser_name,
-      parserView: sidecarParsed.source_parser?.parser_view,
-    };
+  // Only call the sidecar for heavy binary formats (PDF, DOCX, etc.)
+  // Plain text files are decoded instantly by the browser — no round-trip needed
+  if (isHeavyFile(file)) {
+    const sidecarParsed = await parseUploadedFileWithSidecar(file, { title: file.name });
+    if (sidecarParsed?.raw_content?.trim()) {
+      return {
+        text: sidecarParsed.raw_content.trim(),
+        parserName: sidecarParsed.source_parser?.parser_name,
+        parserView: sidecarParsed.source_parser?.parser_view,
+      };
+    }
+    return { text: null };
   }
 
   const extension = getFileExtension(file.name);
@@ -306,9 +323,7 @@ const IngestionPanel: React.FC<IngestionPanelProps> = ({
   };
 
   const handleFilesSelected = async (files: FileList | File[]) => {
-      for (const file of Array.from(files)) {
-          await handleFileSelect(file);
-      }
+      await Promise.all(Array.from(files).map((file) => handleFileSelect(file)));
   };
 
   const handleAddLink = () => {
