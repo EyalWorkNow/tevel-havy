@@ -334,6 +334,26 @@ const buildRawContext = (studies: StudyItem[]): string =>
     })
     .join("\n\n");
 
+// Build the Gemini REST body. The v1beta REST API uses the JSON-serialised proto
+// field name, which is `system_instruction` (snake_case) — NOT camelCase.
+// Some endpoint variants advertise camelCase but reject it at runtime; using
+// snake_case is safe across all versions that support the field.
+const buildGeminiBody = (prompt: string, systemInstructionText: string, includeSystemInstruction: boolean): Record<string, unknown> => {
+  const body: Record<string, unknown> = {
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    generationConfig: {
+      temperature: 0.2,
+      topP: 0.9,
+      maxOutputTokens: 4096,
+    },
+  };
+  if (includeSystemInstruction && systemInstructionText) {
+    // snake_case is the correct protobuf JSON representation used by the REST API.
+    body["system_instruction"] = { parts: [{ text: systemInstructionText }] };
+  }
+  return body;
+};
+
 const callGemini = async (prompt: string, systemInstruction: string): Promise<{ answer: string; tokens: TokenUsage | null; metadata: Record<string, unknown> }> => {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) {
@@ -343,29 +363,36 @@ const callGemini = async (prompt: string, systemInstruction: string): Promise<{ 
   const controller = new AbortController();
   const timeoutMs = Number.parseInt(process.env.BENCHMARK_GEMINI_TIMEOUT_MS || "60000", 10);
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  const urls = [
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
-    `https://generativelanguage.googleapis.com/v1/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
+
+  // Strategy: try v1beta with system_instruction, then v1beta prompt-only,
+  // then v1 prompt-only (prepending the instruction into the user turn).
+  const attempts: Array<{ url: string; includeSystemInstruction: boolean; prependInstruction: boolean }> = [
+    {
+      url: `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
+      includeSystemInstruction: true,
+      prependInstruction: false,
+    },
+    {
+      url: `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
+      includeSystemInstruction: false,
+      prependInstruction: true,
+    },
+    {
+      url: `https://generativelanguage.googleapis.com/v1/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
+      includeSystemInstruction: false,
+      prependInstruction: true,
+    },
   ];
 
   try {
     let lastError: Error | undefined;
-    for (const url of urls) {
+    for (const attempt of attempts) {
       try {
-        const isV1Beta = url.includes("/v1beta/");
-        const requestPrompt = isV1Beta ? prompt : `${systemInstruction}\n\n${prompt}`;
-        const body: Record<string, unknown> = {
-          contents: [{ role: "user", parts: [{ text: requestPrompt }] }],
-          generationConfig: {
-            temperature: 0.2,
-            topP: 0.9,
-            maxOutputTokens: 4096,
-          },
-        };
-        if (isV1Beta) {
-          body.systemInstruction = { parts: [{ text: systemInstruction }] };
-        }
-        const response = await fetch(url, {
+        const requestPrompt = attempt.prependInstruction && systemInstruction
+          ? `${systemInstruction}\n\n${prompt}`
+          : prompt;
+        const body = buildGeminiBody(requestPrompt, systemInstruction, attempt.includeSystemInstruction);
+        const response = await fetch(attempt.url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           signal: controller.signal,
@@ -373,7 +400,14 @@ const callGemini = async (prompt: string, systemInstruction: string): Promise<{ 
         });
         const data = await response.json();
         if (!response.ok) {
-          throw new Error(`Gemini HTTP ${response.status}: ${JSON.stringify(data).slice(0, 600)}`);
+          // 400 with "Unknown name" means the field is not supported on this endpoint variant.
+          // Fall through to the next attempt.
+          const errText = JSON.stringify(data).slice(0, 600);
+          if (response.status === 400 && errText.includes("Unknown name")) {
+            lastError = new Error(`Gemini HTTP ${response.status}: ${errText}`);
+            continue;
+          }
+          throw new Error(`Gemini HTTP ${response.status}: ${errText}`);
         }
         const answer = data.candidates?.[0]?.content?.parts?.map((part: { text?: string }) => part.text || "").join("\n").trim();
         return {
@@ -381,7 +415,8 @@ const callGemini = async (prompt: string, systemInstruction: string): Promise<{ 
           tokens: data.usageMetadata || null,
           metadata: {
             model: GEMINI_MODEL,
-            endpoint: url.includes("/v1beta/") ? "v1beta" : "v1",
+            endpoint: attempt.url.includes("/v1beta/") ? "v1beta" : "v1",
+            systemInstructionMode: attempt.includeSystemInstruction ? "system_instruction_field" : "prepended",
             finishReason: data.candidates?.[0]?.finishReason,
             safetyRatings: data.candidates?.[0]?.safetyRatings || [],
           },

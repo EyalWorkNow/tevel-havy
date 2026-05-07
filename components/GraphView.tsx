@@ -33,8 +33,8 @@ const GraphView: React.FC<GraphViewProps> = ({ data, onNodeClick, crossRefEntiti
     const filteredNodeIds = new Set(filteredNodes.map(n => n.id));
     
     // 2. Prepare Data Clones
-    let nodes: any[] = filteredNodes.map(d => ({ ...d }));
-    let links: any[] = data.edges
+    const nodes: any[] = filteredNodes.map(d => ({ ...d }));
+    const links: any[] = data.edges
         .filter(e => filteredNodeIds.has(e.source as string) && filteredNodeIds.has(e.target as string))
         .map(d => ({ ...d }));
 

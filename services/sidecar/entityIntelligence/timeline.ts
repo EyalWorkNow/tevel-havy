@@ -32,7 +32,7 @@ export const buildEntityTimelines = (
               : [],
           } satisfies EntityTimelineItem;
         })
-        .filter((item): item is EntityTimelineItem => Boolean(item))
+        .filter((item): item is NonNullable<typeof item> => item !== null)
         .sort((left, right) => sortTime(left.time_start).localeCompare(sortTime(right.time_start)) || right.confidence - left.confidence);
       return [entity.id, items];
     }),

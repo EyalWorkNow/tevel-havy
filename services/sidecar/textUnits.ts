@@ -63,6 +63,32 @@ const trimSpan = (text: string, start: number, end: number): { start: number; en
   return { start: nextStart, end: nextEnd };
 };
 
+// ─── Structural detection ─────────────────────────────────────────────────────
+// Table row: any line that has at least two pipe-delimited cells
+const TABLE_ROW_RE = /^\s*\|.+\|/;
+// Markdown separator rows like |---|---|
+const TABLE_SEP_RE = /^\s*\|[-| :]+\|/;
+// Markdown headings (#, ##, ###) OR an all-caps anchor line (e.g. "STATEMENT OF WORK")
+const HEADING_RE = /^(?:#{1,6}\s+\S.{1,120}|[A-Z][A-Z0-9 /_-]{3,80})$/;
+// Lines that carry an explicit emphasis marker or safety/importance keyword
+const EMPHASIS_RE = /\*{1,2}[A-Z][^*]{2,200}\*{1,2}|\b(?:IMPORTANT\s+NOTE|ATTENTION|CAUTION|WARNING|NOTE:)/i;
+// Form fields: "FIELD LABEL:" or "FIELD LABEL. " at the start of a line
+const FORM_FIELD_RE = /^[A-Z][A-Z0-9 /_.-]{1,40}[:.]\s*\S/;
+
+const classifyLine = (
+  line: string,
+): "table_row" | "table_sep" | "heading" | "emphasis" | "form_field" | "text" => {
+  if (TABLE_SEP_RE.test(line)) return "table_sep";
+  if (TABLE_ROW_RE.test(line)) return "table_row";
+  const trimmed = line.trim();
+  if (HEADING_RE.test(trimmed)) return "heading";
+  if (EMPHASIS_RE.test(trimmed)) return "emphasis";
+  if (FORM_FIELD_RE.test(trimmed)) return "form_field";
+  return "text";
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 const splitParagraphRanges = (text: string): Array<{ start: number; end: number }> => {
   const ranges: Array<{ start: number; end: number }> = [];
   const boundaryRegex = /\r?\n(?:[ \t]*\r?\n)+/g;
@@ -317,9 +343,81 @@ export const createTextUnits = (
     ordinal += 1;
   };
 
+  // Emit each non-separator table row as an atomic unit so cell contents stay
+  // associated with their headers and quantities are never split from item names.
+  const emitTableRows = (start: number, end: number) => {
+    const rangeText = normalizedText.slice(start, end);
+    const lines = rangeText.split("\n");
+    let headerLine: string | null = null;
+    let cursor = start;
+
+    for (const line of lines) {
+      const lineEnd = cursor + line.length;
+      const kind = classifyLine(line);
+
+      if (kind === "table_sep") {
+        cursor = lineEnd + 1; // skip separator rows (|---|---|)
+        continue;
+      }
+
+      if (kind === "table_row") {
+        // Prefix data rows with the header so each chunk is self-contained
+        const rowText = headerLine ? `${headerLine}\n${line}` : line;
+        if (rowText.trim()) {
+          // Build a synthetic range pointing at the data-row position in the normalizedText
+          const { start: rs, end: re } = trimSpan(normalizedText, cursor, lineEnd);
+          if (re > rs) pushUnit(rs, re, "table_row");
+        }
+        if (!headerLine) headerLine = line; // first data row is the header
+      }
+
+      cursor = lineEnd + 1;
+    }
+  };
+
   const emitRange = (start: number, end: number, preferredKind: TextUnitKind) => {
     const { start: trimmedStart, end: trimmedEnd } = trimSpan(normalizedText, start, end);
     if (trimmedEnd <= trimmedStart) return;
+
+    const rangeText = normalizedText.slice(trimmedStart, trimmedEnd);
+    const lines = rangeText.split("\n");
+
+    // ── Structural detection (runs before size/sentence splitting) ───────────
+
+    // Markdown table: any line that looks like a pipe-delimited row
+    if (lines.some((line) => TABLE_ROW_RE.test(line))) {
+      emitTableRows(trimmedStart, trimmedEnd);
+      return;
+    }
+
+    // Single-line heading (markdown # or all-caps anchor)
+    if (lines.length === 1 && classifyLine(lines[0]) === "heading") {
+      pushUnit(trimmedStart, trimmedEnd, "heading");
+      return;
+    }
+
+    // Emphasis / important-note block
+    if (EMPHASIS_RE.test(rangeText)) {
+      // Emit as emphasis_block if it fits; otherwise fall through to sentence split
+      if (trimmedEnd - trimmedStart <= maxChars) {
+        pushUnit(trimmedStart, trimmedEnd, "emphasis_block");
+        return;
+      }
+    }
+
+    // Form-field lines: emit each field line as its own unit
+    if (lines.length > 1 && lines.every((line) => !line.trim() || classifyLine(line) === "form_field")) {
+      lines.forEach((line) => {
+        if (!line.trim()) return;
+        const lineStart = trimmedStart + rangeText.indexOf(line);
+        const lineEnd = lineStart + line.length;
+        const { start: ls, end: le } = trimSpan(normalizedText, lineStart, lineEnd);
+        if (le > ls) pushUnit(ls, le, "form_field");
+      });
+      return;
+    }
+
+    // ── Standard prose splitting ─────────────────────────────────────────────
 
     if (trimmedEnd - trimmedStart <= maxChars) {
       pushUnit(trimmedStart, trimmedEnd, preferredKind);

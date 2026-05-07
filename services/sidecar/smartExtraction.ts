@@ -365,7 +365,7 @@ export const buildStructuredRelationCandidates = (params: {
         contradicts: [],
       } satisfies SidecarRelationCandidate;
     })
-    .filter((candidate): candidate is SidecarRelationCandidate => Boolean(candidate) && Boolean(candidate.source_entity_id) && Boolean(candidate.target_entity_id));
+    .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate) && Boolean(candidate.source_entity_id) && Boolean(candidate.target_entity_id));
 
   const seen = new Set<string>();
   return candidates.filter((candidate) => {

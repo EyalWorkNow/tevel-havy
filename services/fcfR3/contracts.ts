@@ -79,8 +79,8 @@ export interface FcfR3PersistRequest {
 
 export interface FcfR3Repository {
   persistRun(run: FcfR3PersistedRun): Promise<FcfR3PersistedRun>;
-  getRun(runId: string): Promise<FcfR3PersistedRun | null>;
-  getLatestRun(caseId: string): Promise<FcfR3PersistedRun | null>;
+  getRun(runId: string, tenantId?: string): Promise<FcfR3PersistedRun | null>;
+  getLatestRun(caseId: string, tenantId?: string): Promise<FcfR3PersistedRun | null>;
 }
 
 const stableHash = (value: string): string => {

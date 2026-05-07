@@ -783,7 +783,7 @@ const summarize = (results: RunResult[]) => {
         },
       ];
     }),
-  ) as Record<SystemName, Record<string, number | null>>;
+  ) as unknown as Record<SystemName, Record<string, number | null>>;
 
   const baseline = summary.baseline_rag;
   const trust = summary.trust_stack;

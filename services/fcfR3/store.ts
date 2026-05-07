@@ -27,11 +27,11 @@ const withRepository = async <T,>(operation: (repository: FcfR3Repository) => Pr
 export const persistFcfR3Run = (run: FcfR3PersistedRun): Promise<FcfR3PersistedRun> =>
   withRepository((repository) => repository.persistRun(run));
 
-export const getFcfR3Run = (runId: string): Promise<FcfR3PersistedRun | null> =>
-  withRepository((repository) => repository.getRun(runId));
+export const getFcfR3Run = (runId: string, tenantId?: string): Promise<FcfR3PersistedRun | null> =>
+  withRepository((repository) => repository.getRun(runId, tenantId));
 
-export const getLatestFcfR3Run = (caseId: string): Promise<FcfR3PersistedRun | null> =>
-  withRepository((repository) => repository.getLatestRun(caseId));
+export const getLatestFcfR3Run = (caseId: string, tenantId?: string): Promise<FcfR3PersistedRun | null> =>
+  withRepository((repository) => repository.getLatestRun(caseId, tenantId));
 
 export const __resetFcfR3StoreForTests = async (): Promise<void> => {
   activeRepository = fallbackRepository;

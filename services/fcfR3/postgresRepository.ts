@@ -43,6 +43,7 @@ const rowFromRun = (payload: FcfR3PersistedRun) => ({
   query_id: payload.run.query_id,
   question: payload.run.question,
   generated_at: payload.run.generated_at,
+  tenant_id: payload.run.query_plan.tenant_id || null,
   answer_id: payload.run.answer_id || null,
   citation_run_id: payload.run.citation_run_id || null,
   citation_status: payload.run.citation_status || null,
@@ -123,19 +124,18 @@ export class PostgresFcfR3Repository implements FcfR3Repository {
     return run;
   }
 
-  async getRun(runId: string): Promise<FcfR3PersistedRun | null> {
-    const { data, error } = await this.client.from("fcf_r3_runs").select("*").eq("run_id", runId).maybeSingle();
+  async getRun(runId: string, tenantId?: string): Promise<FcfR3PersistedRun | null> {
+    let query = this.client.from("fcf_r3_runs").select("*").eq("run_id", runId);
+    if (tenantId) query = query.or(`tenant_id.is.null,tenant_id.eq.${tenantId}`);
+    const { data, error } = await query.maybeSingle();
     if (error) throw new Error(error.message || "FCF-R3 Postgres operation failed");
     return data ? this.hydrateRun(data as RunRow) : null;
   }
 
-  async getLatestRun(caseId: string): Promise<FcfR3PersistedRun | null> {
-    const { data, error } = await this.client
-      .from("fcf_r3_runs")
-      .select("*")
-      .eq("case_id", caseId)
-      .order("generated_at", { ascending: false })
-      .limit(1);
+  async getLatestRun(caseId: string, tenantId?: string): Promise<FcfR3PersistedRun | null> {
+    let query = this.client.from("fcf_r3_runs").select("*").eq("case_id", caseId);
+    if (tenantId) query = query.or(`tenant_id.is.null,tenant_id.eq.${tenantId}`);
+    const { data, error } = await query.order("generated_at", { ascending: false }).limit(1);
     if (error) throw new Error(error.message || "FCF-R3 Postgres operation failed");
     const row = (data as RunRow[] | null)?.[0];
     return row ? this.hydrateRun(row) : null;

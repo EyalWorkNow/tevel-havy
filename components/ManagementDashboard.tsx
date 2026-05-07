@@ -660,7 +660,7 @@ const ManagementDashboard: React.FC<ManagementDashboardProps> = ({ studies, onNa
                                 <Globe size={18} className="text-cyan-300" />
                             </div>
                             <div className="mt-5 grid gap-3">
-                                {Object.entries(analytics.domainScores)
+                                {(Object.entries(analytics.domainScores) as [string, number][])
                                     .sort((a, b) => b[1] - a[1])
                                     .map(([name, value]) => (
                                         <div key={name} className="rounded-[22px] border border-white/10 bg-black/20 p-4">
@@ -669,7 +669,7 @@ const ManagementDashboard: React.FC<ManagementDashboardProps> = ({ studies, onNa
                                                 <span className="text-slate-400">{value.toFixed(1)}</span>
                                             </div>
                                             <div className="mt-3">
-                                                <SignalBar value={(value / Math.max(...Object.values(analytics.domainScores), 1)) * 100} tone="bg-gradient-to-r from-emerald-300 via-cyan-300 to-sky-300" />
+                                                <SignalBar value={(value / Math.max(...(Object.values(analytics.domainScores) as number[]), 1)) * 100} tone="bg-gradient-to-r from-emerald-300 via-cyan-300 to-sky-300" />
                                             </div>
                                         </div>
                                     ))}

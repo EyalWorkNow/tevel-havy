@@ -354,7 +354,7 @@ export class PostgresEntityIntelligenceRepository implements EntityIntelligenceR
           explanation: task.reason,
         } satisfies AmbiguousMentionRecord;
       })
-      .filter((item): item is AmbiguousMentionRecord => Boolean(item));
+      .filter((item): item is NonNullable<typeof item> => item !== null);
   }
 
   async getEntityCandidateDecisions(entityId: string): Promise<CandidateMatchRecord[]> {

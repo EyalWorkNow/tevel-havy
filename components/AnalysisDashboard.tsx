@@ -391,7 +391,10 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ data, allS
     const direct =
       contextCard?.referenceProfile ||
       localIntelligencePackage.reference_knowledge?.[effectiveEntity.id] ||
-      Object.values(localIntelligencePackage.reference_knowledge || {}).find(
+      (localIntelligencePackage.reference_knowledge
+        ? (Object.values(localIntelligencePackage.reference_knowledge) as NonNullable<typeof localIntelligencePackage.reference_knowledge>[string][])
+        : []
+      ).find(
         (profile) =>
           normalize(profile.entity_id) === normalize(effectiveEntity.id) ||
           normalize(profile.canonical_name) === normalize(effectiveEntity.name) ||
@@ -459,14 +462,17 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ data, allS
   const researchDossier = data.research_dossier;
   const summaryPanelList = useMemo(() => {
     const panelOrder = ['case_brief', 'entity_brief', 'relationship_brief', 'timeline_summary', 'contradiction_summary', 'update_summary'];
-    return Object.values(data.summary_panels || {}).sort((left, right) => {
+    return (data.summary_panels ? (Object.values(data.summary_panels) as NonNullable<typeof data.summary_panels>[string][]) : []).sort((left, right) => {
       const orderDelta = panelOrder.indexOf(left.kind) - panelOrder.indexOf(right.kind);
       if (orderDelta !== 0) return orderDelta;
       return right.confidence - left.confidence;
     });
   }, [data.summary_panels]);
   const retrievalBundleList = useMemo(
-    () => Object.values(retrievalArtifacts?.bundles || {}).sort((left, right) => right.confidence - left.confidence),
+    () => (retrievalArtifacts
+      ? (Object.values(retrievalArtifacts.bundles) as NonNullable<typeof retrievalArtifacts>["bundles"][string][])
+      : []
+    ).sort((left, right) => right.confidence - left.confidence),
     [retrievalArtifacts],
   );
   const relatedEntityPanels = useMemo(() => {
@@ -521,7 +527,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ data, allS
       },
       {
         label: 'Reference links',
-        value: Object.values(data.reference_knowledge || {}).reduce((acc, profile) => acc + (profile.links?.length || 0), 0),
+        value: (data.reference_knowledge ? (Object.values(data.reference_knowledge) as NonNullable<typeof data.reference_knowledge>[string][]) : []).reduce((acc, profile) => acc + (profile.links?.length || 0), 0),
         note: `${(data.watchlist_hits || []).length} watchlist hits`,
         accent: 'text-violet-400 border-violet-400/20 bg-violet-400/5',
       },
@@ -555,7 +561,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ data, allS
       const avgConfidence = connections.reduce((acc, r) => acc + r.confidence, 0) / (degree || 1);
       
       // Normalized Score 0-100
-      let score = (degree * 10) + (avgConfidence * 20);
+      const score = (degree * 10) + (avgConfidence * 20);
       return Math.min(Math.round(score), 100);
   };
 
@@ -700,9 +706,9 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ data, allS
           const selectedStudies = allStudies.filter(s => selectedMergeIds.has(s.id));
           const insight = await crossReferenceStudies(data, selectedStudies);
           setMergedInsight(insight);
-          let newNodes = [...localGraph.nodes];
-          let newEdges = [...localGraph.edges];
-          let newEntities = [...localEntities];
+          const newNodes = [...localGraph.nodes];
+          const newEdges = [...localGraph.edges];
+          const newEntities = [...localEntities];
           selectedStudies.forEach(s => {
               s.intelligence.entities.forEach(e => {
                   if (!newEntities.find(le => le.name === e.name)) { newEntities.push({ ...e, type: e.type + ' (External)' }); }
@@ -1018,7 +1024,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ data, allS
       });
 
       // 3. Merge and Sort
-      let merged = [...currentEvents, ...externalEvents].filter(e => e._timestamp > 0);
+      const merged = [...currentEvents, ...externalEvents].filter(e => e._timestamp > 0);
       
       // Sort
       merged.sort((a, b) => {
@@ -2824,7 +2830,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ data, allS
                                                     </div>
                                                     <div className="text-xs text-white font-semibold" dir="auto">{hit.matched_name}</div>
                                                     <div className="grid grid-cols-2 gap-2 text-[10px] text-slate-400">
-                                                        {Object.entries(hit.score_breakdown).slice(0, 4).map(([label, value]) => (
+                                                        {(Object.entries(hit.score_breakdown) as [string, number][]).slice(0, 4).map(([label, value]) => (
                                                             <div key={label} className="rounded-lg border border-slate-800 bg-slate-900/40 px-2 py-1 flex items-center justify-between gap-2">
                                                                 <span>{label.replace(/_/g, ' ')}</span>
                                                                 <span className="font-mono">{Math.round(value * 100)}%</span>

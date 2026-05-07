@@ -16,7 +16,11 @@
     "bench:trust": "tsx scripts/benchmark-version-trust.ts",
     "bench:intel-he": "tsx scripts/benchmark-live-research-intel-he.ts",
     "bench:cross-doc": "tsx scripts/benchmark-cross-document-synthesis.ts",
-    "test:sidecar": "tsx --test tests/sidecar/*.test.ts"
+    "test:sidecar": "tsx --test tests/sidecar/*.test.ts",
+    "bench:fcf-r3-qa": "tsx scripts/benchmark-fcf-r3-qa.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "check": "npm run typecheck && npm run lint && npm run test:sidecar"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.89.0",
@@ -31,10 +35,12 @@
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
     "autoprefixer": "^10.5.0",
+    "eslint": "^10.3.0",
     "postcss": "^8.5.9",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.20.6",
     "typescript": "~5.8.2",
+    "typescript-eslint": "^8.59.2",
     "vite": "^6.2.0"
   }
 }

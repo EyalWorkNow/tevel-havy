@@ -317,6 +317,7 @@ export interface IntelligencePackage {
   knowledge_sources?: import("./services/sidecar/knowledge/contracts").KnowledgeSourceSnapshot[];
   reference_warnings?: string[];
   entity_intelligence?: import("./services/sidecar/entityIntelligence/types").EntityIntelligenceCaseResult;
+  tenant_id?: string;
 }
 
 export interface ChatMessage {

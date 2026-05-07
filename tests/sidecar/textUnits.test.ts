@@ -72,3 +72,39 @@ test("normalization preserves raw-to-normalized and normalized-to-raw span fidel
     "Orion Logistics",
   );
 });
+
+test("createTextUnits classifies markdown table rows as table_row kind", () => {
+  const text = "| Name | Role | Country |\n| --- | --- | --- |\n| Orion Logistics | Shipper | AE |\n| Cedar Finance | Funder | CH |";
+  const units = createTextUnits("doc-table", text, { maxChars: 500 });
+
+  const tableRows = units.filter((u) => u.kind === "table_row");
+  assert.ok(tableRows.length >= 2, `Expected ≥2 table_row units, got ${tableRows.length}`);
+  assert.ok(tableRows.every((u) => u.text.startsWith("|")), "All table_row units should start with |");
+  const sepRow = units.find((u) => u.text.match(/^\|[-| :]+\|/));
+  assert.equal(sepRow, undefined, "Separator row should not be emitted as a text unit");
+});
+
+test("createTextUnits classifies headings as heading kind", () => {
+  const text = "CONTRACT TERMS\n\nThis agreement is between parties.\n\n## Scope of Work\n\nAll deliverables are defined herein.";
+  const units = createTextUnits("doc-heading", text, { maxChars: 500 });
+
+  const headings = units.filter((u) => u.kind === "heading");
+  assert.ok(headings.length >= 1, `Expected ≥1 heading unit, got ${headings.length}`);
+});
+
+test("createTextUnits classifies emphasis blocks as emphasis_block kind", () => {
+  const text = "Background context.\n\nIMPORTANT NOTE: All shipments require prior authorization.\n\nFurther details follow.";
+  const units = createTextUnits("doc-emphasis", text, { maxChars: 500 });
+
+  const emphasis = units.filter((u) => u.kind === "emphasis_block");
+  assert.ok(emphasis.length >= 1, `Expected ≥1 emphasis_block unit, got ${emphasis.length}`);
+  assert.ok(emphasis[0].text.includes("IMPORTANT NOTE"), "emphasis_block should contain the IMPORTANT NOTE text");
+});
+
+test("createTextUnits classifies form fields as form_field kind", () => {
+  const text = "VENDOR NAME: Orion Logistics Ltd\nCONTRACT NO: OL-2025-001\nEFFECTIVE DATE: 2025-01-01";
+  const units = createTextUnits("doc-form", text, { maxChars: 500 });
+
+  const formFields = units.filter((u) => u.kind === "form_field");
+  assert.ok(formFields.length >= 1, `Expected ≥1 form_field unit, got ${formFields.length}`);
+});

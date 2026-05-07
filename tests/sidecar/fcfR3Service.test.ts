@@ -310,7 +310,7 @@ test("FCF-R3 entity-context selection gates evidence to the queried entity befor
         statement_id: "stmt-orion",
         statement_text: "Cedar Finance transferred funds to Orion Logistics after the Ashdod meeting.",
         knowledge: "FACT",
-        category: "FINANCE",
+        category: "FINANCIAL",
         confidence: 0.86,
         assumption_flag: false,
         intelligence_gap: false,
@@ -322,7 +322,7 @@ test("FCF-R3 entity-context selection gates evidence to the queried entity befor
         statement_id: "stmt-noise",
         statement_text: "TNT appeared in a separate weapons inventory unrelated to Orion Logistics.",
         knowledge: "FACT",
-        category: "WEAPONS",
+        category: "TACTICAL",
         confidence: 0.82,
         assumption_flag: false,
         intelligence_gap: false,
@@ -410,18 +410,18 @@ test("FCF-R3 insufficient entity evidence stays cautious and does not promote we
 });
 
 test("FCF-R3 exhaustive entity-context queries run coverage pass across major context types", () => {
-  const turkeyStatements = [
-    ["stmt-command", "Turkey strategic command issued guidance to the external network.", "COMMAND"],
-    ["stmt-control", "Turkey operational control cell directed field activity through a handler.", "CONTROL"],
-    ["stmt-finance", "Turkey financing cell transferred payments through a commercial account.", "FINANCE"],
-    ["stmt-tech", "A Turkish technology vendor supplied drone equipment and sensors to the network.", "TECH"],
-    ["stmt-logistics", "Turkey logistics route moved supplies through a vehicle corridor.", "LOGISTICS"],
-    ["stmt-geo", "Istanbul and Ankara formed the proxy geography for Turkey-linked activity.", "GEOGRAPHY"],
-    ["stmt-operator", "A Turkey direct operator recruited a human asset for the activity.", "OPERATORS"],
-    ["stmt-comms", "Turkey communications relay used a phone and Telegram channel.", "COMMS"],
-    ["stmt-doctrine", "Turkey doctrine and tactics emphasized compartmented proxy tradecraft.", "TACTICS"],
-    ["stmt-institution", "Turkey institutional actors included an intelligence agency and ministry liaison.", "INSTITUTION"],
-  ] as const;
+  const turkeyStatements: [string, string, import("../../types").StatementCategory][] = [
+    ["stmt-command", "Turkey strategic command issued guidance to the external network.", "STRATEGIC"],
+    ["stmt-control", "Turkey operational control cell directed field activity through a handler.", "STRATEGIC"],
+    ["stmt-finance", "Turkey financing cell transferred payments through a commercial account.", "FINANCIAL"],
+    ["stmt-tech", "A Turkish technology vendor supplied drone equipment and sensors to the network.", "OTHER"],
+    ["stmt-logistics", "Turkey logistics route moved supplies through a vehicle corridor.", "LOGISTICAL"],
+    ["stmt-geo", "Istanbul and Ankara formed the proxy geography for Turkey-linked activity.", "OTHER"],
+    ["stmt-operator", "A Turkey direct operator recruited a human asset for the activity.", "OTHER"],
+    ["stmt-comms", "Turkey communications relay used a phone and Telegram channel.", "TACTICAL"],
+    ["stmt-doctrine", "Turkey doctrine and tactics emphasized compartmented proxy tradecraft.", "TACTICAL"],
+    ["stmt-institution", "Turkey institutional actors included an intelligence agency and ministry liaison.", "STRATEGIC"],
+  ];
   const pkg = makePackage({
     entities: [
       {
@@ -480,7 +480,7 @@ test("FCF-R3 marks exhaustive entity-context coverage as partial when available 
       statement_id: `stmt-partial-${index}`,
       statement_text,
       knowledge: "FACT",
-      category: "CONTEXT",
+      category: "OTHER",
       confidence: 0.82,
       assumption_flag: false,
       intelligence_gap: false,
@@ -509,8 +509,8 @@ test("FCF-R3 ranks direct command/control above weak infrastructure indicators",
       {
         statement_id: "stmt-logo",
         statement_text: "A Turkish logo appeared on an indirect support website footer.",
-        knowledge: "INDICATOR",
-        category: "INFRASTRUCTURE",
+        knowledge: "ASSESSMENT",
+        category: "LOGISTICAL",
         confidence: 0.42,
         assumption_flag: false,
         intelligence_gap: false,
@@ -522,7 +522,7 @@ test("FCF-R3 ranks direct command/control above weak infrastructure indicators",
         statement_id: "stmt-control-direct",
         statement_text: "MIT direct operator controlled the field team through a command handler.",
         knowledge: "FACT",
-        category: "CONTROL",
+        category: "STRATEGIC",
         confidence: 0.9,
         assumption_flag: false,
         intelligence_gap: false,
@@ -549,8 +549,8 @@ test("FCF-R3 keeps indirect TIKA-style indicators as possible indications and ra
       {
         statement_id: "stmt-tika-logo",
         statement_text: "A TIKA logo was identified at a compound labeled as foreign-funded infrastructure.",
-        knowledge: "INDICATOR",
-        category: "INFRASTRUCTURE",
+        knowledge: "ASSESSMENT",
+        category: "LOGISTICAL",
         confidence: 0.61,
         assumption_flag: false,
         intelligence_gap: false,
@@ -562,7 +562,7 @@ test("FCF-R3 keeps indirect TIKA-style indicators as possible indications and ra
         statement_id: "stmt-direct-finance",
         statement_text: "Bank transfer records show Turkey financing cell transferred cryptocurrency payments to the farm wallet.",
         knowledge: "FACT",
-        category: "FINANCE",
+        category: "FINANCIAL",
         confidence: 0.91,
         assumption_flag: false,
         intelligence_gap: false,
@@ -590,7 +590,7 @@ test("FCF-R3 phrases indirect indicators cautiously instead of confirmed involve
         statement_id: "stmt-indirect",
         statement_text: "Analysts suspected the Turkish phone prefix may indicate access to a support network.",
         knowledge: "ASSESSMENT",
-        category: "COMMUNICATIONS",
+        category: "TACTICAL",
         confidence: 0.64,
         assumption_flag: false,
         intelligence_gap: false,
@@ -619,8 +619,8 @@ test("FCF-R3 separates negative or alternative-actor evidence from positive enti
       {
         statement_id: "stmt-boundary",
         statement_text: "The transfer was not funded by Turkey; instead Hamas financed the purchase.",
-        knowledge: "QUALIFICATION",
-        category: "FINANCE",
+        knowledge: "ASSESSMENT",
+        category: "FINANCIAL",
         confidence: 0.88,
         assumption_flag: false,
         intelligence_gap: false,
@@ -632,7 +632,7 @@ test("FCF-R3 separates negative or alternative-actor evidence from positive enti
         statement_id: "stmt-positive",
         statement_text: "Turkey communications relay used a Telegram channel.",
         knowledge: "FACT",
-        category: "COMMS",
+        category: "TACTICAL",
         confidence: 0.83,
         assumption_flag: false,
         intelligence_gap: false,
@@ -660,7 +660,7 @@ test("FCF-R3 coverage checklist marks missing major categories as not found", ()
         statement_id: "stmt-finance-only",
         statement_text: "Turkey financing cell transferred cryptocurrency payments.",
         knowledge: "FACT",
-        category: "FINANCE",
+        category: "FINANCIAL",
         confidence: 0.84,
         assumption_flag: false,
         intelligence_gap: false,
@@ -886,4 +886,102 @@ test("FCF-R3 final answer hides internal/debug cluster labels", () => {
   });
 
   assert.doesNotMatch(answer, /Version validity|Entity profile|sidecar_rel|stmt_rel|Institutional actors/);
+});
+
+// ── Tenant isolation regression tests ─────────────────────────────────────
+
+const makeTenantPackage = (tenantId: string | undefined, docId: string, entityName: string): IntelligencePackage =>
+  makePackage({
+    tenant_id: tenantId,
+    entities: [{ id: "e1", name: entityName, type: "ORGANIZATION", confidence: 0.9 }],
+    retrieval_artifacts: {
+      backend: "hybrid_graph_ranker_v1",
+      warnings: [],
+      item_count: 1,
+      contradiction_item_count: 0,
+      bundle_count: 1,
+      bundles: {
+        case_brief: {
+          bundle_id: `bundle_${docId}`,
+          kind: "case_brief",
+          title: "Case Brief",
+          query: `${entityName} activity`,
+          hits: [
+            {
+              item_id: `hit-${docId}`,
+              item_type: "claim",
+              source_doc_id: docId,
+              source_text_unit_id: `tu-${docId}`,
+              evidence_id: `ev-${docId}-1`,
+              snippet: `${entityName} conducted financial transfers via offshore accounts.`,
+              related_entities: [entityName],
+              related_events: [],
+              contradiction_ids: [],
+              version_state: "current",
+              validity_score: 0.94,
+              source_trust: 0.88,
+              version_edge_ids: [],
+              confidence: 0.91,
+              score: 0.92,
+              matched_terms: [entityName.toLowerCase().split(" ")[0]],
+              explanation: ["Exact entity overlap"],
+            },
+          ],
+          cited_evidence_ids: [`ev-${docId}-1`],
+          related_entities: [entityName],
+          related_events: [],
+          contradictions: [],
+          version_state: "current",
+          validity_score: 0.94,
+          confidence: 0.91,
+          warnings: [],
+        },
+      },
+    },
+  });
+
+test("FCF-R3 tenant isolation: same-tenant query passes atoms through normally", () => {
+  const pkg = makeTenantPackage("tenant-alpha", "doc-alpha-1", "Orion Logistics");
+  const run = buildFcfR3ReadPath("What is Orion Logistics?", pkg, {
+    tenantId: "tenant-alpha",
+    maxContextChars: 3000,
+    maxEvidenceItems: 4,
+  });
+
+  assert.notEqual(run.audit.answer_status, "no-evidence");
+  assert.ok(run.selected.length > 0, "Same-tenant query should produce evidence");
+  assert.equal(run.audit.pruned_count, 0, "No atoms should be pruned for same-tenant query");
+  assert.ok(
+    run.selected.every((entry) => !entry.atom.tenant_id || entry.atom.tenant_id === "tenant-alpha"),
+    "All selected atoms must belong to tenant-alpha",
+  );
+});
+
+test("FCF-R3 tenant isolation: cross-tenant query blocks all tagged atoms", () => {
+  const pkg = makeTenantPackage("tenant-alpha", "doc-alpha-1", "Orion Logistics");
+  const run = buildFcfR3ReadPath("What is Orion Logistics?", pkg, {
+    tenantId: "tenant-bravo",
+    maxContextChars: 3000,
+    maxEvidenceItems: 4,
+  });
+
+  assert.equal(run.audit.answer_status, "no-evidence", "Cross-tenant query must yield no-evidence");
+  assert.equal(run.selected.length, 0, "No atoms from tenant-alpha should survive a tenant-bravo query");
+  assert.ok(run.audit.pruned_count > 0, "Pruned count must reflect blocked tenant-alpha atoms");
+  assert.ok(
+    run.audit.warnings.some((w) => /tenant/i.test(w)),
+    "Audit warnings must mention tenant scope pruning",
+  );
+});
+
+test("FCF-R3 tenant isolation: untagged atoms pass through for backward compatibility", () => {
+  const pkg = makeTenantPackage(undefined, "doc-legacy-1", "Cedar Finance");
+  const run = buildFcfR3ReadPath("What is Cedar Finance?", pkg, {
+    tenantId: "tenant-alpha",
+    maxContextChars: 3000,
+    maxEvidenceItems: 4,
+  });
+
+  assert.notEqual(run.audit.answer_status, "no-evidence", "Untagged (legacy) atoms must pass through any tenant query");
+  assert.ok(run.selected.length > 0, "Legacy package atoms should be accessible even with tenantId set");
 });

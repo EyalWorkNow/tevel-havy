@@ -38,7 +38,7 @@ interface FeedDashboardProps {
 const calculateSynapseScore = (study: StudyItem, allStudies: StudyItem[]): { score: number, reason: string } => {
     let score = (study.intelligence.reliability || 0.5) * 50; // Base score from reliability
     let connections = 0;
-    let highValueLinks: string[] = [];
+    const highValueLinks: string[] = [];
 
     const otherStudies = allStudies.filter(s => s.id !== study.id);
     

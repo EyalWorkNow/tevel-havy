@@ -1,5 +1,12 @@
 export type ExtractionSource = "rule" | "gazetteer" | "model" | "linker" | "llm";
-export type TextUnitKind = "paragraph" | "sentence" | "hard_split";
+export type TextUnitKind =
+  | "paragraph"
+  | "sentence"
+  | "hard_split"
+  | "table_row"
+  | "heading"
+  | "emphasis_block"
+  | "form_field";
 export type CandidateMetadataValue =
   | string
   | number

@@ -151,6 +151,7 @@ export type SearchOptions = {
 type IndexedEvidenceItem = Omit<RetrievalEvidenceHit, "score" | "matched_terms" | "explanation"> & {
   search_text: string;
   context_window?: string;
+  structural_kind?: string; // propagated from SidecarTextUnit.kind for scoring boosts
 };
 
 type ScoredEvidenceItem = {
@@ -653,6 +654,7 @@ const buildIndexedEvidenceItems = (
       contradiction_ids: [],
       confidence: 0.62,
       search_text: unit.text,
+      structural_kind: unit.kind,
     })),
     ...(payload.entities || []).map((entity) => ({
       item_id: entity.entity_id,
@@ -937,21 +939,40 @@ const buildBaseScoredItems = (
 
       const entityRelevanceScore = Math.min(1, entityOverlap.length * 0.35 + item.related_entities.length * 0.035);
       const directnessScore = directnessForItem(item, entityOverlap.length, matchedTerms);
+      // Structural kind boost: table rows, headings, and emphasis blocks carry
+      // primary context (quantities, line items, important notes) that the model
+      // would otherwise undervalue relative to prose clauses.
+      const structuralKindBoost =
+        item.structural_kind === "table_row" ? 0.28 :
+        item.structural_kind === "heading" ? 0.18 :
+        item.structural_kind === "emphasis_block" ? 0.22 :
+        item.structural_kind === "form_field" ? 0.14 :
+        0;
+      if (structuralKindBoost > 0) {
+        explanation.push(`Structural kind '${item.structural_kind}' promoted as primary context.`);
+      }
+
       const analyticalImportanceScore = Math.min(
         1,
         (item.item_type === "relation" ? 0.32 : 0) +
           (item.item_type === "event" ? 0.26 : 0) +
           (item.item_type === "claim" ? 0.22 : 0) +
           (item.contradiction_ids.length ? 0.28 : 0) +
+          structuralKindBoost +
           Math.min(0.2, item.related_entities.length * 0.045) +
           Math.min(0.12, item.related_events.length * 0.04) +
           item.confidence * 0.18,
       );
       const boilerplatePenalty = BOILERPLATE_PATTERN.test(item.snippet) ? 0.16 : 0;
+      // Table rows legitimately contain isolated numeric quantities (6, 10, 8).
+      // Suppress the isolated-token penalty for structured kinds so quantities
+      // are never penalised for being short.
       const isolatedTokenPenalty =
-        matchedTerms.length === 1 &&
-        entityOverlap.length === 0 &&
-        (/^\d+$/.test(matchedTerms[0]) || matchedTerms[0].length <= 3)
+        item.structural_kind === "table_row" || item.structural_kind === "form_field"
+          ? 0
+          : matchedTerms.length === 1 &&
+            entityOverlap.length === 0 &&
+            (/^\d+$/.test(matchedTerms[0]) || matchedTerms[0].length <= 3)
           ? 0.12
           : 0;
       const duplicatePenalty = 0;

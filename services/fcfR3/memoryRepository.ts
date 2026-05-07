@@ -17,12 +17,12 @@ export class MemoryFcfR3Repository implements FcfR3Repository {
     return clone(next);
   }
 
-  async getRun(runId: string): Promise<FcfR3PersistedRun | null> {
+  async getRun(runId: string, _tenantId?: string): Promise<FcfR3PersistedRun | null> {
     const run = this.runsById.get(runId);
     return run ? clone(run) : null;
   }
 
-  async getLatestRun(caseId: string): Promise<FcfR3PersistedRun | null> {
+  async getLatestRun(caseId: string, _tenantId?: string): Promise<FcfR3PersistedRun | null> {
     const runIds = this.runIdsByCase.get(caseId) || [];
     const runs = runIds
       .map((runId) => this.runsById.get(runId))
