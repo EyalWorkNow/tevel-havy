@@ -376,12 +376,16 @@ def parse_file(payload: Dict[str, Any]) -> Dict[str, Any]:
         result = converter.convert(str(file_path))
         document = result.document
         extracted_text = ""
-        if hasattr(document, "export_to_text"):
-            extracted_text = document.export_to_text()
-        elif hasattr(document, "export_to_markdown"):
+        # Prefer markdown export: it preserves table pipe syntax (| col | col |)
+        # so the downstream chunker can emit atomic table_row units.
+        # Fall back to plain-text export only if markdown is unavailable.
+        if hasattr(document, "export_to_markdown"):
             extracted_text = document.export_to_markdown()
+        elif hasattr(document, "export_to_text"):
+            extracted_text = document.export_to_text()
         metadata: Dict[str, Any] = {
             "source_filename": file_path.name,
+            "parser_view": "markdown",
         }
         return extracted_text.strip(), metadata
 
@@ -404,27 +408,12 @@ def parse_file(payload: Dict[str, Any]) -> Dict[str, Any]:
         return extracted_text, metadata
 
     if suffix == ".pdf":
-        try:
-            extracted_text, metadata = parse_pdf_with_pypdf()
-            if extracted_text:
-                return {
-                    "parser_name": "pypdf",
-                    "parser_version": importlib.metadata.version("pypdf"),
-                    "parser_input_kind": "file",
-                    "parser_view": "parsed_text",
-                    "text": extracted_text,
-                    "metadata": metadata,
-                }
-        except Exception as exc:  # pragma: no cover - optional adapter
-            pdf_error = str(exc)
-        else:
-            pdf_error = "PyPDF returned empty text output."
-
+        # Docling first: its markdown export preserves table structure.
+        # pypdf produces linearised text that destroys cell relationships.
+        docling_error = ""
         try:
             extracted_text, metadata = parse_with_docling()
             if extracted_text:
-                metadata["fallback_from"] = "pypdf"
-                metadata["fallback_error"] = pdf_error
                 return {
                     "parser_name": "docling",
                     "parser_version": importlib.metadata.version("docling"),
@@ -438,6 +427,25 @@ def parse_file(payload: Dict[str, Any]) -> Dict[str, Any]:
         else:
             docling_error = "Docling returned empty text output."
 
+        pdf_error = ""
+        try:
+            extracted_text, metadata = parse_pdf_with_pypdf()
+            if extracted_text:
+                metadata["fallback_from"] = "docling"
+                metadata["fallback_error"] = docling_error
+                return {
+                    "parser_name": "pypdf",
+                    "parser_version": importlib.metadata.version("pypdf"),
+                    "parser_input_kind": "file",
+                    "parser_view": "parsed_text",
+                    "text": extracted_text,
+                    "metadata": metadata,
+                }
+        except Exception as exc:  # pragma: no cover - optional adapter
+            pdf_error = str(exc)
+        else:
+            pdf_error = "PyPDF returned empty text output."
+
         return {
             "parser_name": "pdf_parse_failed",
             "parser_version": None,
@@ -446,8 +454,8 @@ def parse_file(payload: Dict[str, Any]) -> Dict[str, Any]:
             "text": "",
             "metadata": {
                 "source_filename": file_path.name,
-                "error": docling_error,
-                "pdf_fallback_error": pdf_error,
+                "error": pdf_error,
+                "pdf_fallback_error": docling_error,
             },
         }
 
