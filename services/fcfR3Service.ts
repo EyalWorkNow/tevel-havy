@@ -168,6 +168,14 @@ export interface FcfR3AuditSummary {
   cost_estimate_usd?: number;
 }
 
+export interface FcfR3AbstentionDecision {
+  should_abstain: boolean;
+  pre_llm_verdict: "proceed" | "warn" | "abstain";
+  confidence_score: number;
+  entity_intersection_rate: number;
+  reasons: string[];
+}
+
 export interface FcfR3ReadPathRun {
   query_plan: FcfR3QueryPlan;
   selected: FcfR3SelectedEvidence[];
@@ -176,6 +184,7 @@ export interface FcfR3ReadPathRun {
   knowledge_snapshot: string;
   retrieval_artifacts: RetrievalArtifacts;
   audit: FcfR3AuditSummary;
+  abstention_gate: FcfR3AbstentionDecision;
 }
 
 type FcfR3BuildOptions = {
@@ -1712,7 +1721,7 @@ export const buildFcfR3ReadPath = (
     warnings,
   };
 
-  return {
+  const partialRun = {
     query_plan: queryPlan,
     selected,
     evidence_clusters: evidenceClusters,
@@ -1720,6 +1729,10 @@ export const buildFcfR3ReadPath = (
     knowledge_snapshot: buildKnowledgeSnapshot(queryPlan, audit),
     retrieval_artifacts: buildRetrievalArtifacts(queryPlan, selected, evidenceClusters, warnings),
     audit,
+  };
+  return {
+    ...partialRun,
+    abstention_gate: evaluateAbstentionGate(partialRun as FcfR3ReadPathRun),
   };
 };
 
@@ -1791,6 +1804,102 @@ const clusterConfidenceLabel = (cluster: RetrievalEvidenceCluster, status: FcfR3
   return cluster.confidence >= 0.72 ? "high" : cluster.confidence >= 0.52 ? "medium" : "low";
 };
 
+const STATUS_PENALTY: Record<FcfR3AnswerStatus, number> = {
+  "current-supported": 0,
+  "historical-only": 0.12,
+  "conflict-detected": 0.08,
+  "insufficient-evidence": 0.35,
+  "no-evidence": 0.60,
+  "human-review-required": 0.15,
+};
+
+export const evaluateAbstentionGate = (
+  run: FcfR3ReadPathRun,
+  options?: {
+    minConfidenceScore?: number;
+    minTraceabilityRate?: number;
+  },
+): FcfR3AbstentionDecision => {
+  const minConfidence = options?.minConfidenceScore ?? 0.28;
+  const minTraceability = options?.minTraceabilityRate ?? 0.5;
+  const reasons: string[] = [];
+
+  const queryEntities = run.query_plan.entities.map((e) => normalizeLookupText(e));
+  const atomSearchTargets = run.selected.map((s) =>
+    [s.atom.text, s.atom.title, ...s.atom.entity_anchors].map(normalizeLookupText).join(" "),
+  );
+  const matchedEntities = queryEntities.filter((entity) =>
+    entity.length >= 3 && atomSearchTargets.some((target) => target.includes(entity)),
+  );
+  const entityIntersectionRate =
+    queryEntities.length > 0
+      ? matchedEntities.length / queryEntities.length
+      : 1.0;
+
+  const traceabilityScore = run.audit.traceability_rate ?? 1.0;
+  const directEvidenceBonus = (run.audit.direct_evidence_count ?? 0) > 0 ? 0.15 : 0;
+  const selectedRatio = Math.min(1, run.audit.selected_count / Math.max(1, run.query_plan.max_evidence_items));
+  const statusPenalty = STATUS_PENALTY[run.audit.answer_status] ?? 0;
+  const entityPenalty = queryEntities.length > 0 && entityIntersectionRate < 0.25 ? 0.2 : 0;
+
+  const confidenceScore = Math.max(
+    0,
+    Math.min(
+      1,
+      traceabilityScore * 0.4 +
+        selectedRatio * 0.25 +
+        directEvidenceBonus +
+        (1 - statusPenalty) * 0.2 -
+        entityPenalty,
+    ),
+  );
+
+  const hardAbstain =
+    run.audit.answer_status === "no-evidence" ||
+    (run.audit.traceability_rate !== undefined && run.audit.traceability_rate < minTraceability) ||
+    confidenceScore < minConfidence;
+
+  const softWarn =
+    !hardAbstain &&
+    (run.audit.answer_status === "insufficient-evidence" ||
+      entityIntersectionRate < 0.5 ||
+      confidenceScore < 0.45);
+
+  if (run.audit.answer_status === "no-evidence") {
+    reasons.push("No evidence survived FCF-R3 selection for this query.");
+  }
+  if (run.audit.traceability_rate !== undefined && run.audit.traceability_rate < minTraceability) {
+    reasons.push(
+      `Traceability rate (${Math.round(run.audit.traceability_rate * 100)}%) is below the hard abstention threshold (${Math.round(minTraceability * 100)}%).`,
+    );
+  }
+  if (queryEntities.length > 0 && entityIntersectionRate === 0) {
+    reasons.push(
+      `None of the query entities (${run.query_plan.entities.slice(0, 3).join(", ")}) appear in the selected evidence atoms.`,
+    );
+  } else if (queryEntities.length > 0 && entityIntersectionRate < 0.5) {
+    reasons.push(
+      `Only ${Math.round(entityIntersectionRate * 100)}% of query entities matched in selected evidence atoms.`,
+    );
+  }
+  if (confidenceScore < minConfidence) {
+    reasons.push(
+      `Combined confidence score (${confidenceScore.toFixed(2)}) is below the abstention threshold (${minConfidence.toFixed(2)}).`,
+    );
+  }
+  if (run.audit.answer_status === "insufficient-evidence" && !hardAbstain) {
+    reasons.push("Evidence is present but below the threshold for a confirmed synthesis.");
+  }
+
+  return {
+    should_abstain: hardAbstain,
+    pre_llm_verdict: hardAbstain ? "abstain" : softWarn ? "warn" : "proceed",
+    confidence_score: Number(confidenceScore.toFixed(4)),
+    entity_intersection_rate: Number(entityIntersectionRate.toFixed(4)),
+    reasons,
+  };
+};
+
 export const buildFcfR3DeterministicAnswer = (
   query: string,
   run: FcfR3ReadPathRun,
@@ -1801,6 +1910,14 @@ export const buildFcfR3DeterministicAnswer = (
   },
 ): string => {
   const isHebrew = /[\u0590-\u05FF]/u.test(query);
+
+  if (run.abstention_gate?.should_abstain) {
+    const reasonSummary = run.abstention_gate.reasons.slice(0, 2).join(" ");
+    return isHebrew
+      ? `\u05D0\u05D9\u05DF \u05D1\u05E1\u05D9\u05E1 \u05E8\u05D0\u05D9\u05D5\u05EA \u05DE\u05E1\u05E4\u05D9\u05E7 \u05DC\u05EA\u05E9\u05D5\u05D1\u05D4. ${reasonSummary}`
+      : `Insufficient evidence basis to answer. ${reasonSummary}`;
+  }
+
   // Prefer retrieval hits and statements over entity/relation metadata \u2014 they contain
   // actual document text and are more useful to the user than internal graph labels.
   const usefulAtoms = run.selected.filter((e) => ["retrieval_hit", "statement", "timeline"].includes(e.atom.kind));

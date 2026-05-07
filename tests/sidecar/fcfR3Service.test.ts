@@ -1202,3 +1202,139 @@ test("FCF-R3 over-association E: table co-presence without explicit relation pre
     "No explicit relation atom should be selected when entities only co-appear in a table row",
   );
 });
+
+// AbstentionGate tests
+test("AbstentionGate returns proceed when evidence is current and entity intersection is high", () => {
+  const pkg = makePackage({
+    entities: [{ id: "e1", name: "Orion Logistics", type: "ORGANIZATION", confidence: 0.92 }],
+    statements: [
+      {
+        statement_id: "stmt-orion-g1",
+        statement_text: "Orion Logistics received funds from an offshore account in April 2026.",
+        knowledge: "FACT",
+        category: "FINANCIAL",
+        confidence: 0.9,
+        assumption_flag: false,
+        intelligence_gap: false,
+        impact: "HIGH",
+        operational_relevance: "HIGH",
+        related_entities: ["Orion Logistics"],
+      },
+    ],
+  });
+
+  const run = buildFcfR3ReadPath("What financial activity is linked to Orion Logistics?", pkg, {
+    maxContextChars: 2600,
+    maxEvidenceItems: 4,
+  });
+
+  assert.ok(run.abstention_gate, "abstention_gate must be present on every run");
+  assert.equal(run.abstention_gate.should_abstain, false);
+  assert.equal(run.abstention_gate.pre_llm_verdict, "proceed");
+  assert.ok(run.abstention_gate.confidence_score > 0.28, "confidence should exceed hard threshold");
+  assert.ok(run.abstention_gate.entity_intersection_rate > 0, "Orion Logistics should match in selected atoms");
+});
+
+test("AbstentionGate returns abstain and deterministic answer emits abstention message when no evidence", () => {
+  const pkg = makePackage({
+    entities: [],
+    statements: [],
+    timeline: [],
+    relations: [],
+  });
+
+  const run = buildFcfR3ReadPath("What is the role of Shadow Network in the operation?", pkg, {
+    maxContextChars: 2000,
+    maxEvidenceItems: 4,
+  });
+
+  assert.equal(run.abstention_gate.should_abstain, true, "empty corpus must trigger abstention");
+  assert.equal(run.abstention_gate.pre_llm_verdict, "abstain");
+  assert.ok(run.abstention_gate.reasons.length > 0, "reasons array must be non-empty");
+
+  const answer = buildFcfR3DeterministicAnswer("What is the role of Shadow Network in the operation?", run, {
+    includeFallbackNotice: false,
+  });
+  assert.match(answer, /Insufficient evidence basis/i);
+});
+
+test("AbstentionGate entity_intersection_rate is 0 when query entities are absent from all selected atoms", () => {
+  const pkg = makePackage({
+    entities: [{ id: "e1", name: "Cedar Finance", type: "ORGANIZATION", confidence: 0.88 }],
+    statements: [
+      {
+        statement_id: "stmt-cedar-g1",
+        statement_text: "Cedar Finance transferred payments to an account in Istanbul.",
+        knowledge: "FACT",
+        category: "FINANCIAL",
+        confidence: 0.85,
+        assumption_flag: false,
+        intelligence_gap: false,
+        impact: "HIGH",
+        operational_relevance: "HIGH",
+        related_entities: ["Cedar Finance"],
+      },
+    ],
+  });
+
+  const run = buildFcfR3ReadPath("What is the background of Phantom Group?", pkg, {
+    maxContextChars: 2600,
+    maxEvidenceItems: 4,
+  });
+
+  assert.ok(
+    run.abstention_gate.entity_intersection_rate < 0.5 || run.abstention_gate.should_abstain,
+    "a query about an entity not in the corpus must produce low or zero intersection rate",
+  );
+  assert.ok(run.abstention_gate.reasons.length > 0, "reasons must explain the low intersection");
+});
+
+test("AbstentionGate confidence_score factors in traceability_rate and direct evidence", () => {
+  const pkg = makePackage({
+    entities: [{ id: "e1", name: "Orion Logistics", type: "ORGANIZATION", confidence: 0.92 }],
+    statements: [
+      {
+        statement_id: "stmt-orion-g2",
+        statement_text: "Orion Logistics is confirmed as a coordination node.",
+        knowledge: "FACT",
+        category: "TACTICAL",
+        confidence: 0.92,
+        assumption_flag: false,
+        intelligence_gap: false,
+        impact: "HIGH",
+        operational_relevance: "HIGH",
+        related_entities: ["Orion Logistics"],
+      },
+    ],
+  });
+
+  const run = buildFcfR3ReadPath("What is the role of Orion Logistics?", pkg, {
+    maxContextChars: 2600,
+    maxEvidenceItems: 4,
+  });
+
+  assert.ok(typeof run.abstention_gate.confidence_score === "number");
+  assert.ok(run.abstention_gate.confidence_score >= 0 && run.abstention_gate.confidence_score <= 1);
+  assert.equal(run.abstention_gate.should_abstain, false, "high-quality evidence should not trigger abstention");
+});
+
+test("AbstentionGate emits Hebrew abstention message for Hebrew queries", () => {
+  const pkg = makePackage({
+    entities: [],
+    statements: [],
+    timeline: [],
+    relations: [],
+  });
+
+  const run = buildFcfR3ReadPath("מה הקשר של ישות לא קיימת למבצע?", pkg, {
+    maxContextChars: 2000,
+    maxEvidenceItems: 4,
+  });
+
+  assert.equal(run.abstention_gate.should_abstain, true);
+
+  const answer = buildFcfR3DeterministicAnswer("מה הקשר של ישות לא קיימת למבצע?", run, {
+    includeFallbackNotice: false,
+  });
+  assert.match(answer, /אין בסיס ראיות/);
+});
