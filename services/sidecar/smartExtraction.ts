@@ -363,6 +363,7 @@ export const buildStructuredRelationCandidates = (params: {
         evidence,
         corroborates: [],
         contradicts: [],
+        evidence_status: "explicit" as const,
       } satisfies SidecarRelationCandidate;
     })
     .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate) && Boolean(candidate.source_entity_id) && Boolean(candidate.target_entity_id));

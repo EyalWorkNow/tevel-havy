@@ -78,7 +78,7 @@ export const buildClaimLayer = (
     });
   });
 
-  payload.relation_candidates.forEach((relation) => {
+  payload.relation_candidates.filter((relation) => relation.relation_type !== "CO_MENTION_SAME_TEXT_UNIT").forEach((relation) => {
     const sourceEntityId =
       (relation.source_mention_ids || []).map((id) => mentionEntityMap[id]).find(Boolean) || relation.source_entity_id;
     const targetEntityId =

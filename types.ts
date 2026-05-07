@@ -111,9 +111,10 @@ export interface Entity {
 export interface Relation {
   source: string; // Entity ID or Name
   target: string; // Entity ID or Name
-  type: RelationshipType | string; 
+  type: RelationshipType | string;
   confidence: number;
   statement_id?: string; // Provenance
+  evidence_status?: "explicit" | "inferred" | "unsupported";
 }
 
 // UI & LEGACY COMPATIBILITY TYPES
@@ -318,6 +319,13 @@ export interface IntelligencePackage {
   reference_warnings?: string[];
   entity_intelligence?: import("./services/sidecar/entityIntelligence/types").EntityIntelligenceCaseResult;
   tenant_id?: string;
+  fcf_ingestion_meta?: {
+    answer_status: string;
+    candidate_count: number;
+    selected_count: number;
+    warnings: string[];
+    top_statements: string[];
+  };
 }
 
 export interface ChatMessage {

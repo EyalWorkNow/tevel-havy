@@ -163,6 +163,8 @@ export interface SidecarEntityRecord {
   external_reference_ids?: string[];
 }
 
+export type RelationEvidenceStatus = "explicit" | "inferred" | "unsupported";
+
 export interface SidecarRelationCandidate {
   relation_id: string;
   source_doc_id: string;
@@ -180,6 +182,7 @@ export interface SidecarRelationCandidate {
   evidence: EvidenceSpan;
   corroborates?: string[];
   contradicts?: string[];
+  evidence_status?: RelationEvidenceStatus;
 }
 
 export interface SidecarEventCandidate {

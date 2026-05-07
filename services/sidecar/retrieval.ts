@@ -687,7 +687,7 @@ const buildIndexedEvidenceItems = (
       confidence: mention.confidence,
       search_text: `${mention.mention_text} ${mention.evidence.normalized_supporting_snippet}`,
     })),
-    ...(payload.relation_candidates || []).map((relation) => {
+    ...(payload.relation_candidates || []).filter((relation) => relation.relation_type !== "CO_MENTION_SAME_TEXT_UNIT").map((relation) => {
       const sourceName = resolveEntityName(relation.source_entity_id);
       const targetName = resolveEntityName(relation.target_entity_id);
       return {

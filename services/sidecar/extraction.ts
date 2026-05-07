@@ -609,6 +609,7 @@ export const extractRelationCandidates = (
           }),
           corroborates: [],
           contradicts: [],
+          evidence_status: "inferred" as const,
         });
       }
     }

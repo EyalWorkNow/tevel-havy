@@ -985,3 +985,194 @@ test("FCF-R3 tenant isolation: untagged atoms pass through for backward compatib
   assert.notEqual(run.audit.answer_status, "no-evidence", "Untagged (legacy) atoms must pass through any tenant query");
   assert.ok(run.selected.length > 0, "Legacy package atoms should be accessible even with tenantId set");
 });
+
+// ─── Over-association / false-relation regression tests ───────────────────────
+
+test("FCF-R3 over-association A: co-occurrence in separate sentences does not establish a relation", () => {
+  const pkg = makePackage({
+    entities: [
+      { id: "e1", name: "Nexus Corp", type: "ORGANIZATION", confidence: 0.9, aliases: [] },
+      { id: "e2", name: "Iron Shield", type: "ORGANIZATION", confidence: 0.9, aliases: [] },
+    ],
+    statements: [
+      {
+        statement_id: "stmt-a1",
+        statement_text: "Nexus Corp operates logistics routes in the northern corridor.",
+        knowledge: "FACT",
+        category: "LOGISTICAL",
+        confidence: 0.84,
+        assumption_flag: false,
+        intelligence_gap: false,
+        impact: "MEDIUM",
+        operational_relevance: "MEDIUM",
+        related_entities: ["Nexus Corp"],
+      },
+      {
+        statement_id: "stmt-a2",
+        statement_text: "Iron Shield provides security consulting services.",
+        knowledge: "FACT",
+        category: "OTHER",
+        confidence: 0.84,
+        assumption_flag: false,
+        intelligence_gap: false,
+        impact: "MEDIUM",
+        operational_relevance: "MEDIUM",
+        related_entities: ["Iron Shield"],
+      },
+    ],
+  });
+
+  const run = buildFcfR3ReadPath("What is the relationship between Nexus Corp and Iron Shield?", pkg, {
+    maxContextChars: 3000,
+    maxEvidenceItems: 5,
+  });
+
+  assert.equal(run.query_plan.requires_relation, true, "requires_relation must be set for relationship-between queries");
+  assert.equal(run.audit.answer_status, "insufficient-evidence", "Co-occurrence in separate sentences must not establish a factual relationship");
+  assert.ok(
+    run.selected.every((e) => !(e.atom.kind === "relation" && Boolean(e.atom.evidence_id))),
+    "No explicit relation atom should be selected when only co-occurrence exists",
+  );
+});
+
+test("FCF-R3 over-association B: co-mention in same paragraph does not establish an association", () => {
+  const pkg = makePackage({
+    entities: [
+      { id: "e1", name: "Karmi", type: "PERSON", confidence: 0.9, aliases: [] },
+      { id: "e2", name: "Red Label", type: "ORGANIZATION", confidence: 0.9, aliases: [] },
+    ],
+    statements: [
+      {
+        statement_id: "stmt-b1",
+        statement_text: "Karmi and Red Label are both referenced in the Georgia procurement packet.",
+        knowledge: "FACT",
+        category: "OTHER",
+        confidence: 0.84,
+        assumption_flag: false,
+        intelligence_gap: false,
+        impact: "MEDIUM",
+        operational_relevance: "MEDIUM",
+        related_entities: ["Karmi", "Red Label"],
+      },
+    ],
+  });
+
+  const run = buildFcfR3ReadPath("Is Karmi associated with Red Label?", pkg, {
+    maxContextChars: 3000,
+    maxEvidenceItems: 5,
+  });
+
+  assert.equal(run.query_plan.requires_relation, true, "requires_relation must be set for 'is X associated with Y' queries");
+  assert.equal(run.audit.answer_status, "insufficient-evidence", "Co-mention in same paragraph must not establish an association");
+});
+
+test("FCF-R3 over-association C: explicit predicate relation in supporting span is accepted as fact", () => {
+  const pkg = makePackage({
+    entities: [
+      { id: "e1", name: "Alpha Corp", type: "ORGANIZATION", confidence: 0.9, aliases: [] },
+      { id: "e2", name: "Beta Group", type: "ORGANIZATION", confidence: 0.9, aliases: [] },
+    ],
+    statements: [
+      {
+        statement_id: "stmt-c1",
+        statement_text: "Alpha Corp funded Beta Group in Q3-2025.",
+        knowledge: "FACT",
+        category: "FINANCIAL",
+        confidence: 0.88,
+        assumption_flag: false,
+        intelligence_gap: false,
+        impact: "HIGH",
+        operational_relevance: "HIGH",
+        related_entities: ["Alpha Corp", "Beta Group"],
+      },
+    ],
+    relations: [
+      { source: "Alpha Corp", target: "Beta Group", type: "FUNDED", confidence: 0.88, statement_id: "stmt-c1" },
+    ],
+  });
+
+  const run = buildFcfR3ReadPath("What is the relationship between Alpha Corp and Beta Group?", pkg, {
+    maxContextChars: 3000,
+    maxEvidenceItems: 5,
+  });
+
+  assert.equal(run.query_plan.requires_relation, true, "requires_relation must be set for relationship-between queries");
+  assert.equal(run.audit.answer_status, "current-supported", "Explicit predicate relation with provenance must be accepted as current-supported");
+  assert.ok(
+    run.selected.some((e) => e.atom.kind === "relation" && Boolean(e.atom.evidence_id)),
+    "A relation atom with evidence_id must appear in selected evidence",
+  );
+});
+
+test("FCF-R3 over-association D: table-sourced explicit relation is accepted as factual", () => {
+  const pkg = makePackage({
+    entities: [
+      { id: "e1", name: "Gamma Holdings", type: "ORGANIZATION", confidence: 0.9, aliases: [] },
+      { id: "e2", name: "Delta Fund", type: "ORGANIZATION", confidence: 0.9, aliases: [] },
+    ],
+    statements: [
+      {
+        statement_id: "stmt-d1",
+        statement_text: "Transfer | Gamma Holdings → Delta Fund | USD 3.5M | 2025-Q2",
+        knowledge: "FACT",
+        category: "FINANCIAL",
+        confidence: 0.88,
+        assumption_flag: false,
+        intelligence_gap: false,
+        impact: "HIGH",
+        operational_relevance: "HIGH",
+        related_entities: ["Gamma Holdings", "Delta Fund"],
+      },
+    ],
+    relations: [
+      { source: "Gamma Holdings", target: "Delta Fund", type: "FUNDED", confidence: 0.88, statement_id: "stmt-d1" },
+    ],
+  });
+
+  const run = buildFcfR3ReadPath("What is the relationship between Gamma Holdings and Delta Fund?", pkg, {
+    maxContextChars: 3000,
+    maxEvidenceItems: 5,
+  });
+
+  assert.equal(run.query_plan.requires_relation, true, "requires_relation must be set for relationship-between queries");
+  assert.equal(run.audit.answer_status, "current-supported", "Table-sourced explicit relation must be accepted as current-supported");
+  assert.ok(
+    run.selected.some((e) => e.atom.kind === "relation" && Boolean(e.atom.evidence_id)),
+    "A relation atom backed by a table statement must appear in selected evidence",
+  );
+});
+
+test("FCF-R3 over-association E: table co-presence without explicit relation predicate is blocked", () => {
+  const pkg = makePackage({
+    entities: [
+      { id: "e1", name: "Sigma Corp", type: "ORGANIZATION", confidence: 0.9, aliases: [] },
+      { id: "e2", name: "Omega Ltd", type: "ORGANIZATION", confidence: 0.9, aliases: [] },
+    ],
+    statements: [
+      {
+        statement_id: "stmt-e1",
+        statement_text: "Meeting participants | Sigma Corp | Omega Ltd | 2025-03-15",
+        knowledge: "FACT",
+        category: "OTHER",
+        confidence: 0.84,
+        assumption_flag: false,
+        intelligence_gap: false,
+        impact: "MEDIUM",
+        operational_relevance: "MEDIUM",
+        related_entities: ["Sigma Corp", "Omega Ltd"],
+      },
+    ],
+  });
+
+  const run = buildFcfR3ReadPath("What is the relationship between Sigma Corp and Omega Ltd?", pkg, {
+    maxContextChars: 3000,
+    maxEvidenceItems: 5,
+  });
+
+  assert.equal(run.query_plan.requires_relation, true, "requires_relation must be set for relationship-between queries");
+  assert.equal(run.audit.answer_status, "insufficient-evidence", "Table co-presence without an explicit relation predicate must be blocked");
+  assert.ok(
+    run.selected.every((e) => !(e.atom.kind === "relation" && Boolean(e.atom.evidence_id))),
+    "No explicit relation atom should be selected when entities only co-appear in a table row",
+  );
+});

@@ -195,6 +195,85 @@ const buildCorpus = (): QAItem[] => {
   const conflictPkg = mergePackages(payloadToPackage(c1Payload), c2WithVers);
   const humanReviewPkg = mergePackages(payloadToPackage(g1Payload), g2WithVers);
 
+  // K01 fix: add explicit relation so the requires_relation gate can be satisfied.
+  // The a2 payload text is one text unit → statement_id "doc-finance-2025-tu0".
+  const k01Pkg: IntelligencePackage = {
+    ...currentPkg,
+    relations: [
+      ...currentPkg.relations,
+      { source: "Meridian Group", target: "Atlas Holdings", type: "FUNDED", confidence: 0.88, statement_id: "doc-finance-2025-tu0" },
+    ],
+  };
+
+  // ── Q: over-association / false-relation regression ──────────────────────
+  const makeSimplePkg = (overrides: Partial<IntelligencePackage> = {}): IntelligencePackage => ({
+    clean_text: "", raw_text: "", word_count: 0,
+    entities: [], relations: [], insights: [], timeline: [],
+    statements: [], intel_questions: [], intel_tasks: [],
+    tactical_assessment: { ttps: [], recommendations: [], gaps: [] },
+    context_cards: {}, graph: { nodes: [], edges: [] }, reliability: 0.84,
+    ...overrides,
+  });
+
+  const q01Pkg = makeSimplePkg({
+    entities: [
+      { id: "qe1", name: "Falcon Networks", type: "ORGANIZATION", confidence: 0.9, aliases: [] },
+      { id: "qe2", name: "Dragon Exports", type: "ORGANIZATION", confidence: 0.9, aliases: [] },
+    ],
+    statements: [
+      { statement_id: "q01-s1", statement_text: "Falcon Networks manages fiber-optic infrastructure across the eastern corridor.", knowledge: "FACT", category: "STRATEGIC", confidence: 0.84, assumption_flag: false, intelligence_gap: false, impact: "MEDIUM", operational_relevance: "MEDIUM", related_entities: ["Falcon Networks"] },
+      { statement_id: "q01-s2", statement_text: "Dragon Exports handles bulk grain shipping out of the Black Sea ports.", knowledge: "FACT", category: "STRATEGIC", confidence: 0.84, assumption_flag: false, intelligence_gap: false, impact: "MEDIUM", operational_relevance: "MEDIUM", related_entities: ["Dragon Exports"] },
+    ],
+  });
+
+  const q02Pkg = makeSimplePkg({
+    entities: [
+      { id: "qe1", name: "Falcon Networks", type: "ORGANIZATION", confidence: 0.9, aliases: [] },
+      { id: "qe2", name: "Dragon Exports", type: "ORGANIZATION", confidence: 0.9, aliases: [] },
+    ],
+    statements: [
+      { statement_id: "q02-s1", statement_text: "Falcon Networks and Dragon Exports both appear in the Q2-2025 procurement audit.", knowledge: "FACT", category: "STRATEGIC", confidence: 0.84, assumption_flag: false, intelligence_gap: false, impact: "MEDIUM", operational_relevance: "MEDIUM", related_entities: ["Falcon Networks", "Dragon Exports"] },
+    ],
+  });
+
+  const q03BasePkg = makeSimplePkg({
+    entities: [
+      { id: "qe1", name: "Falcon Networks", type: "ORGANIZATION", confidence: 0.9, aliases: [] },
+      { id: "qe2", name: "Dragon Exports", type: "ORGANIZATION", confidence: 0.9, aliases: [] },
+    ],
+    statements: [
+      { statement_id: "q03-s1", statement_text: "Falcon Networks funded Dragon Exports in Q2-2025 as part of a logistics joint venture.", knowledge: "FACT", category: "FINANCIAL", confidence: 0.88, assumption_flag: false, intelligence_gap: false, impact: "HIGH", operational_relevance: "HIGH", related_entities: ["Falcon Networks", "Dragon Exports"] },
+    ],
+  });
+  const q03Pkg: IntelligencePackage = {
+    ...q03BasePkg,
+    relations: [{ source: "Falcon Networks", target: "Dragon Exports", type: "FUNDED", confidence: 0.88, statement_id: "q03-s1" }],
+  };
+
+  const q04BasePkg = makeSimplePkg({
+    entities: [
+      { id: "qe1", name: "Falcon Networks", type: "ORGANIZATION", confidence: 0.9, aliases: [] },
+      { id: "qe2", name: "Dragon Exports", type: "ORGANIZATION", confidence: 0.9, aliases: [] },
+    ],
+    statements: [
+      { statement_id: "q04-s1", statement_text: "Funding table | Falcon Networks → Dragon Exports | USD 1.2M | Q2-2025", knowledge: "FACT", category: "FINANCIAL", confidence: 0.88, assumption_flag: false, intelligence_gap: false, impact: "HIGH", operational_relevance: "HIGH", related_entities: ["Falcon Networks", "Dragon Exports"] },
+    ],
+  });
+  const q04Pkg: IntelligencePackage = {
+    ...q04BasePkg,
+    relations: [{ source: "Falcon Networks", target: "Dragon Exports", type: "FUNDED", confidence: 0.88, statement_id: "q04-s1" }],
+  };
+
+  const q05Pkg = makeSimplePkg({
+    entities: [
+      { id: "qe1", name: "Falcon Networks", type: "ORGANIZATION", confidence: 0.9, aliases: [] },
+      { id: "qe2", name: "Dragon Exports", type: "ORGANIZATION", confidence: 0.9, aliases: [] },
+    ],
+    statements: [
+      { statement_id: "q05-s1", statement_text: "Session attendees | Falcon Networks | Dragon Exports | 2025-04-10", knowledge: "FACT", category: "OTHER", confidence: 0.84, assumption_flag: false, intelligence_gap: false, impact: "MEDIUM", operational_relevance: "MEDIUM", related_entities: ["Falcon Networks", "Dragon Exports"] },
+    ],
+  });
+
   return [
     // ── A: current-supported ─────────────────────────────────────────────
     {
@@ -447,7 +526,7 @@ const buildCorpus = (): QAItem[] => {
       id: "K01",
       category: "synthesis",
       question: "What is the relationship between Meridian Group and Atlas Holdings?",
-      pkg: currentPkg,
+      pkg: k01Pkg,
       expected_status: "current-supported",
       mustContain: ["Atlas"],
     },
@@ -523,6 +602,44 @@ const buildCorpus = (): QAItem[] => {
       question: "Are there conflicting reports about Orion Logistics across different sources?",
       pkg: conflictPkg,
       expected_status: "conflict-detected",
+    },
+    // ── Q: over-association / false-relation regression ───────────────────
+    {
+      id: "Q01",
+      category: "over-association",
+      question: "What is the relationship between Falcon Networks and Dragon Exports?",
+      pkg: q01Pkg,
+      expected_status: "insufficient-evidence",
+    },
+    {
+      id: "Q02",
+      category: "over-association",
+      question: "Is Dragon Exports associated with Falcon Networks?",
+      pkg: q02Pkg,
+      expected_status: "insufficient-evidence",
+    },
+    {
+      id: "Q03",
+      category: "over-association",
+      question: "What is the relationship between Falcon Networks and Dragon Exports?",
+      pkg: q03Pkg,
+      expected_status: "current-supported",
+      mustContain: ["Falcon Networks"],
+    },
+    {
+      id: "Q04",
+      category: "over-association",
+      question: "What is the relationship between Falcon Networks and Dragon Exports?",
+      pkg: q04Pkg,
+      expected_status: "current-supported",
+      mustContain: ["Falcon Networks"],
+    },
+    {
+      id: "Q05",
+      category: "over-association",
+      question: "What is the relationship between Falcon Networks and Dragon Exports?",
+      pkg: q05Pkg,
+      expected_status: "insufficient-evidence",
     },
   ];
 };
